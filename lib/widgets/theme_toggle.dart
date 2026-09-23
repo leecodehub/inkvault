@@ -20,7 +20,7 @@ class _ThemeToggleState extends State<ThemeToggle> {
 
   void _handleTap() {
     setState(() {
-      _turns += 0.5; // Smooth rotation animation
+      _turns += 1.5; // Smooth rotation animation
     });
     widget.onToggle();
   }

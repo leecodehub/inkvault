@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -24,7 +25,6 @@ class HomeView extends StatefulWidget {
 }
 
 class _HomeViewState extends State<HomeView> {
-  // Latest Chapter Releases pagination: 16 cards per page, 5 pages max.
   static const int _latestPageSize = 16;
   static const int _maxLatestPages = 5;
 
@@ -34,7 +34,6 @@ class _HomeViewState extends State<HomeView> {
   @override
   void initState() {
     super.initState();
-    // Fetch trending data using Provider after the initial frame
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final provider = context.read<MangaProvider>();
       provider.loadTrendingManga();
@@ -103,21 +102,22 @@ class _HomeViewState extends State<HomeView> {
           }
 
           final mangaList = provider.trendingManga;
-          final featuredManga = mangaList.first;
 
           return SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _buildHeroBanner(screenWidth, featuredManga),
-                const SizedBox(height: 32),
+                _buildHeroBanner(screenWidth, mangaList),
+                const SizedBox(height: 24),
                 _buildSectionHeader(
                   title: 'Trending Manhwa',
                   onViewAll: () => widget.onTabSelected('All Series'),
                 ),
                 const SizedBox(height: 16),
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  padding: EdgeInsets.symmetric(
+                    horizontal: screenWidth < 600 ? 16 : 24,
+                  ),
                   child: GridView.builder(
                     shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
@@ -131,8 +131,8 @@ class _HomeViewState extends State<HomeView> {
                                   ? 3
                                   : 2,
                       childAspectRatio: 0.52,
-                      crossAxisSpacing: 16,
-                      mainAxisSpacing: 16,
+                      crossAxisSpacing: screenWidth < 600 ? 12 : 16,
+                      mainAxisSpacing: screenWidth < 600 ? 12 : 16,
                     ),
                     itemBuilder: (context, index) {
                       final item = mangaList[index];
@@ -149,7 +149,7 @@ class _HomeViewState extends State<HomeView> {
                     },
                   ),
                 ),
-                const SizedBox(height: 48),
+                const SizedBox(height: 40),
                 KeyedSubtree(
                   key: _latestReleasesKey,
                   child: _buildSectionHeader(
@@ -172,8 +172,10 @@ class _HomeViewState extends State<HomeView> {
     required String title,
     required VoidCallback onViewAll,
   }) {
+    final isMobile = MediaQuery.of(context).size.width < 600;
+
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
+      padding: EdgeInsets.symmetric(horizontal: isMobile ? 16 : 24),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -191,7 +193,7 @@ class _HomeViewState extends State<HomeView> {
               Text(
                 title,
                 style: TextStyle(
-                  fontSize: 18,
+                  fontSize: isMobile ? 16 : 18,
                   fontWeight: FontWeight.bold,
                   color: widget.isDark
                       ? AppColors.darkTextPrimary
@@ -216,218 +218,20 @@ class _HomeViewState extends State<HomeView> {
     );
   }
 
-  Widget _buildHeroBanner(double screenWidth, MangaModel featured) {
-    final isCompact = screenWidth < 800;
-
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        gradient: const LinearGradient(
-          colors: [Color(0xFF1E102A), Color(0xFF0F0814)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.3),
-            blurRadius: 20,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
-        child: Stack(
-          children: [
-            Positioned(
-              right: -50,
-              top: -50,
-              child: Container(
-                width: 300,
-                height: 300,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: const Color(0xFFEB164F).withValues(alpha: 0.15),
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(32),
-              child: Row(
-                children: [
-                  Expanded(
-                    flex: 3,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Row(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFEB164F),
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: const Text(
-                                '#1 FEATURED',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w900,
-                                  letterSpacing: 0.8,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.white12,
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: Row(
-                                children: [
-                                  const Icon(Icons.star_rounded,
-                                      size: 12, color: Colors.amber),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    featured.rating,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 14),
-                        Text(
-                          featured.title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 28,
-                            fontWeight: FontWeight.w900,
-                            height: 1.1,
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        const Text(
-                          'Explore this featured release now on MangaDex.',
-                          maxLines: 3,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: Colors.white70,
-                            fontSize: 13,
-                            height: 1.4,
-                          ),
-                        ),
-                        const SizedBox(height: 22),
-                        Wrap(
-                          spacing: 12,
-                          runSpacing: 8,
-                          children: [
-                            ElevatedButton.icon(
-                              onPressed: () => _openDetailModal(featured),
-                              icon:
-                                  const Icon(Icons.menu_book_rounded, size: 16),
-                              label: Text('Read ${featured.chapter}'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFFEB164F),
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 20,
-                                  vertical: 14,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                              ),
-                            ),
-                            OutlinedButton.icon(
-                              onPressed: () {},
-                              icon: const Icon(Icons.bookmark_border_rounded,
-                                  size: 16),
-                              label: const Text('Bookmark'),
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: Colors.white,
-                                side: const BorderSide(color: Colors.white24),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 18,
-                                  vertical: 14,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (!isCompact) ...[
-                    const SizedBox(width: 24),
-                    Expanded(
-                      flex: 2,
-                      child: Align(
-                        alignment: Alignment.centerRight,
-                        child: Container(
-                          width: 150,
-                          height: 210,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.white24, width: 2),
-                            boxShadow: const [
-                              BoxShadow(
-                                color: Colors.black54,
-                                blurRadius: 16,
-                                offset: Offset(0, 8),
-                              ),
-                            ],
-                          ),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(10),
-                            child: Image.network(
-                              featured.coverUrl,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => Container(
-                                color: const Color(0xFF2A2E3D),
-                                child: const Icon(Icons.broken_image,
-                                    color: Colors.white38),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
+  Widget _buildHeroBanner(double screenWidth, List<MangaModel> mangaList) {
+    return _3DStackedHeroCarousel(
+      mangaList: mangaList.take(9).toList(),
+      isDark: widget.isDark,
+      onCardTap: _openDetailModal,
     );
   }
 
   Widget _buildLatestReleasesGrid(
       double screenWidth, List<MangaModel> releases) {
+    final isMobile = screenWidth < 600;
+
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
+      padding: EdgeInsets.symmetric(horizontal: isMobile ? 16 : 24),
       child: GridView.builder(
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
@@ -435,8 +239,8 @@ class _HomeViewState extends State<HomeView> {
         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: screenWidth > 900 ? 2 : 1,
           mainAxisExtent: 160,
-          crossAxisSpacing: 16,
-          mainAxisSpacing: 16,
+          crossAxisSpacing: isMobile ? 12 : 16,
+          mainAxisSpacing: isMobile ? 12 : 16,
         ),
         itemBuilder: (context, index) {
           return LatestReleaseCard(
@@ -449,12 +253,10 @@ class _HomeViewState extends State<HomeView> {
     );
   }
 
-  /// Switches to [page] and glides the Latest Releases section back to the top.
   void _goToLatestPage(int page) {
     if (page == _latestPage) return;
     setState(() => _latestPage = page);
 
-    // Wait for the new page to lay out, then animate the section to the top.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final sectionContext = _latestReleasesKey.currentContext;
       if (sectionContext == null) return;
@@ -512,7 +314,6 @@ class _HomeViewState extends State<HomeView> {
       );
     }
 
-    // Cap at 5 pages regardless of how many releases came back.
     final int totalPages = math.min(
       _maxLatestPages,
       (releases.length / _latestPageSize).ceil(),
@@ -639,6 +440,576 @@ class _HomeViewState extends State<HomeView> {
   }
 }
 
+class _3DStackedHeroCarousel extends StatefulWidget {
+  final List<MangaModel> mangaList;
+  final bool isDark;
+  final Function(MangaModel) onCardTap;
+
+  const _3DStackedHeroCarousel({
+    required this.mangaList,
+    required this.isDark,
+    required this.onCardTap,
+  });
+
+  @override
+  State<_3DStackedHeroCarousel> createState() => _3DStackedHeroCarouselState();
+}
+
+class _3DStackedHeroCarouselState extends State<_3DStackedHeroCarousel> {
+  int _activeCardIndex = 0;
+  int? _hoveredCardIndex;
+  bool _isBookmarked = false;
+
+  void _nextCard() {
+    setState(() {
+      _activeCardIndex = (_activeCardIndex + 1) % widget.mangaList.length;
+    });
+  }
+
+  void _previousCard() {
+    setState(() {
+      _activeCardIndex = (_activeCardIndex - 1 + widget.mangaList.length) %
+          widget.mangaList.length;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.mangaList.isEmpty) return const SizedBox.shrink();
+
+    final activeManga = widget.mangaList[_activeCardIndex];
+    final isMobile = MediaQuery.of(context).size.width < 900;
+
+    return Container(
+      margin: EdgeInsets.all(isMobile ? 12 : 24),
+      height: isMobile ? 540 : 500,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color:
+            widget.isDark ? const Color(0xFF10141D) : const Color(0xFFF8F9FC),
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: widget.isDark
+                ? Colors.black.withValues(alpha: 0.5)
+                : const Color(0xFFEB164F).withValues(alpha: 0.1),
+            blurRadius: 25,
+            offset: const Offset(0, 10),
+          ),
+        ],
+        border: Border.all(
+          color: widget.isDark
+              ? Colors.white.withValues(alpha: 0.08)
+              : Colors.black.withValues(alpha: 0.08),
+        ),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: GestureDetector(
+          onHorizontalDragEnd: (details) {
+            if (details.primaryVelocity! < 0) {
+              _nextCard();
+            } else if (details.primaryVelocity! > 0) {
+              _previousCard();
+            }
+          },
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 500),
+                  child: ImageFiltered(
+                    key: ValueKey<String>(activeManga.coverUrl),
+                    imageFilter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        image: DecorationImage(
+                          image: NetworkImage(activeManga.coverUrl),
+                          fit: BoxFit.cover,
+                          colorFilter: ColorFilter.mode(
+                            widget.isDark
+                                ? Colors.black.withValues(alpha: 0.65)
+                                : Colors.white.withValues(alpha: 0.52),
+                            widget.isDark
+                                ? BlendMode.darken
+                                : BlendMode.lighten,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Positioned.fill(
+                child: Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: widget.isDark
+                          ? [
+                              Colors.black.withValues(alpha: 0.85),
+                              Colors.black.withValues(alpha: 0.35),
+                              Colors.black.withValues(alpha: 0.75),
+                            ]
+                          : [
+                              Colors.white.withValues(alpha: 0.88),
+                              Colors.white.withValues(alpha: 0.45),
+                              Colors.white.withValues(alpha: 0.7),
+                            ],
+                      begin: Alignment.centerLeft,
+                      end: Alignment.centerRight,
+                    ),
+                  ),
+                ),
+              ),
+              Positioned.fill(
+                child: Padding(
+                  padding: EdgeInsets.all(isMobile ? 16 : 36),
+                  child: isMobile
+                      ? Column(
+                          children: [
+                            SizedBox(
+                              height: 200,
+                              child: Stack(
+                                alignment: Alignment.center,
+                                children: _buildStackedCards(isMobile: true),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Expanded(
+                              child: _buildDetailsOverlay(
+                                activeManga,
+                                isMobile: true,
+                              ),
+                            ),
+                          ],
+                        )
+                      : Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            Expanded(
+                              flex: 5,
+                              child:
+                                  Alignment.centerLeft == Alignment.centerLeft
+                                      ? Container(
+                                          alignment: Alignment.centerLeft,
+                                          child: _buildDetailsOverlay(
+                                            activeManga,
+                                            isMobile: false,
+                                          ),
+                                        )
+                                      : const SizedBox.shrink(),
+                            ),
+                            const SizedBox(width: 24),
+                            Expanded(
+                              flex: 6,
+                              child: Stack(
+                                alignment: Alignment.centerRight,
+                                children: _buildStackedCards(isMobile: false),
+                              ),
+                            ),
+                          ],
+                        ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDetailsOverlay(MangaModel manga, {required bool isMobile}) {
+    final textColorPrimary =
+        widget.isDark ? Colors.white : AppColors.lightTextPrimary;
+    final textColorSecondary =
+        widget.isDark ? Colors.white70 : AppColors.lightTextSecondary;
+    final borderDividerColor =
+        widget.isDark ? Colors.white12 : AppColors.lightBorder;
+
+    return SizedBox(
+      height: isMobile ? null : 380,
+      child: Column(
+        crossAxisAlignment:
+            isMobile ? CrossAxisAlignment.center : CrossAxisAlignment.start,
+        mainAxisAlignment:
+            isMobile ? MainAxisAlignment.center : MainAxisAlignment.start,
+        mainAxisSize: MainAxisSize.max,
+        children: [
+          Wrap(
+            alignment: isMobile ? WrapAlignment.center : WrapAlignment.start,
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: isMobile ? 8 : 12,
+                  vertical: isMobile ? 4 : 6,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEB164F),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.local_fire_department,
+                      size: isMobile ? 11 : 14,
+                      color: Colors.white,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      'RANK ${_activeCardIndex + 1}',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: isMobile ? 9 : 11,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: isMobile ? 8 : 12,
+                  vertical: isMobile ? 4 : 6,
+                ),
+                decoration: BoxDecoration(
+                  color: widget.isDark
+                      ? Colors.white.withValues(alpha: 0.12)
+                      : Colors.black.withValues(alpha: 0.06),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: widget.isDark ? Colors.white24 : Colors.black12,
+                  ),
+                ),
+                child: Text(
+                  manga.category,
+                  style: TextStyle(
+                    color: textColorSecondary,
+                    fontSize: isMobile ? 9 : 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: isMobile ? 8 : 12,
+                  vertical: isMobile ? 4 : 6,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEB164F).withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: const Color(0xFFEB164F).withValues(alpha: 0.4),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.whatshot,
+                      size: isMobile ? 11 : 14,
+                      color: const Color(0xFFEB164F),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      'TRENDING',
+                      style: TextStyle(
+                        color: const Color(0xFFEB164F),
+                        fontSize: isMobile ? 9 : 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: isMobile ? 8 : 16),
+          SizedBox(
+            height: isMobile ? null : 90,
+            child: Align(
+              alignment: isMobile ? Alignment.center : Alignment.centerLeft,
+              child: Text(
+                manga.title,
+                maxLines: 2,
+                textAlign: isMobile ? TextAlign.center : TextAlign.left,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: textColorPrimary,
+                  fontSize: isMobile ? 20 : (manga.title.length > 30 ? 30 : 38),
+                  fontWeight: FontWeight.w900,
+                  height: 1.15,
+                  letterSpacing: -0.5,
+                ),
+              ),
+            ),
+          ),
+          if (!isMobile) ...[
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 42,
+              child: Text(
+                'Follow the epic journey, high stakes battles, and breathtaking storylines in this top-rated series.',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: textColorSecondary,
+                  fontSize: 15,
+                  height: 1.35,
+                ),
+              ),
+            ),
+          ],
+          SizedBox(height: isMobile ? 8 : 12),
+          Container(
+            padding: EdgeInsets.symmetric(vertical: isMobile ? 6 : 10),
+            decoration: BoxDecoration(
+              border: Border(
+                top: BorderSide(color: borderDividerColor),
+                bottom: BorderSide(color: borderDividerColor),
+              ),
+            ),
+            child: Wrap(
+              alignment: isMobile ? WrapAlignment.center : WrapAlignment.start,
+              spacing: isMobile ? 12 : 18,
+              runSpacing: 4,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.star_rounded,
+                      color: const Color(0xFFEB164F),
+                      size: isMobile ? 15 : 18,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      '${manga.rating} / 10',
+                      style: TextStyle(
+                        color: const Color(0xFFEB164F),
+                        fontWeight: FontWeight.w800,
+                        fontSize: isMobile ? 11 : 13,
+                      ),
+                    ),
+                  ],
+                ),
+                Text(
+                  '98.2M Reads',
+                  style: TextStyle(
+                    color: textColorSecondary,
+                    fontSize: isMobile ? 11 : 13,
+                  ),
+                ),
+                Text(
+                  '3.1M Bookmarks',
+                  style: TextStyle(
+                    color: textColorSecondary,
+                    fontSize: isMobile ? 11 : 13,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(height: isMobile ? 12 : 20),
+          Row(
+            mainAxisAlignment:
+                isMobile ? MainAxisAlignment.center : MainAxisAlignment.start,
+            children: [
+              ElevatedButton.icon(
+                onPressed: () => widget.onCardTap(manga),
+                icon: Icon(
+                  Icons.play_arrow_rounded,
+                  size: isMobile ? 18 : 22,
+                ),
+                label: Text(
+                  'READ ${manga.chapter.toUpperCase()}',
+                  style: TextStyle(fontSize: isMobile ? 12 : 14),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFEB164F),
+                  foregroundColor: Colors.white,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isMobile ? 16 : 26,
+                    vertical: isMobile ? 10 : 16,
+                  ),
+                  elevation: 4,
+                  shadowColor: const Color(0xFFEB164F).withValues(alpha: 0.4),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              IconButton(
+                onPressed: () {
+                  setState(() => _isBookmarked = !_isBookmarked);
+                },
+                icon: Icon(
+                  _isBookmarked ? Icons.bookmark : Icons.bookmark_outline,
+                  size: isMobile ? 20 : 24,
+                  color: _isBookmarked
+                      ? const Color(0xFFEB164F)
+                      : (widget.isDark
+                          ? Colors.white
+                          : AppColors.lightTextPrimary),
+                ),
+                style: IconButton.styleFrom(
+                  backgroundColor: _isBookmarked
+                      ? const Color(0xFFEB164F).withValues(alpha: 0.15)
+                      : (widget.isDark
+                          ? Colors.white.withValues(alpha: 0.08)
+                          : Colors.black.withValues(alpha: 0.05)),
+                  padding: EdgeInsets.all(isMobile ? 8 : 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: BorderSide(
+                      color: _isBookmarked
+                          ? const Color(0xFFEB164F)
+                          : (widget.isDark
+                              ? Colors.white.withValues(alpha: 0.15)
+                              : Colors.black.withValues(alpha: 0.12)),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _buildStackedCards({required bool isMobile}) {
+    List<Widget> cardWidgets = [];
+    int totalCards = widget.mangaList.length;
+
+    List<int> relativeOffsets =
+        isMobile ? [-2, -1, 0, 1, 2] : [-4, -3, -2, -1, 0, 1, 2, 3, 4];
+
+    List<int> sortedOffsets = List.from(relativeOffsets)
+      ..sort((a, b) => b.abs().compareTo(a.abs()));
+
+    for (int offset in sortedOffsets) {
+      int itemIndex = (_activeCardIndex + offset) % totalCards;
+      if (itemIndex < 0) itemIndex += totalCards;
+
+      final item = widget.mangaList[itemIndex];
+      bool isActive = offset == 0;
+      bool isHovered = _hoveredCardIndex == itemIndex;
+
+      double scale = isActive ? 1.0 : (1.0 - (offset.abs() * 0.12));
+      double opacity = (1.0 - (offset.abs() * 0.25)).clamp(0.2, 1.0);
+
+      if (isHovered) {
+        scale += 0.05;
+      }
+
+      cardWidgets.add(
+        AnimatedPositioned(
+          key: ValueKey<String>('hero_stack_${item.coverUrl}_$itemIndex'),
+          duration: const Duration(milliseconds: 350),
+          curve: Curves.easeOutCubic,
+          right: isMobile ? null : (220.0 - (offset * 52.0)),
+          left: isMobile ? null : null,
+          top: isMobile
+              ? (isActive ? 10 : 22.0)
+              : (isActive ? 5 : 20.0 + (offset.abs() * 6.0)),
+          child: Transform.translate(
+            offset: Offset(
+              isMobile ? (offset * 50.0) : 0,
+              0,
+            ),
+            child: MouseRegion(
+              onEnter: (_) => setState(() => _hoveredCardIndex = itemIndex),
+              onExit: (_) => setState(() => _hoveredCardIndex = null),
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
+                onTap: () {
+                  if (isActive) {
+                    widget.onCardTap(item);
+                  } else {
+                    setState(() {
+                      _activeCardIndex = itemIndex;
+                    });
+                  }
+                },
+                child: AnimatedScale(
+                  scale: scale,
+                  duration: const Duration(milliseconds: 200),
+                  child: Opacity(
+                    opacity: opacity,
+                    child: Container(
+                      width: isMobile ? 115 : 210,
+                      height: isMobile ? 170 : 320,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: [
+                          BoxShadow(
+                            color: isActive
+                                ? const Color(0xFFEB164F).withValues(alpha: 0.5)
+                                : Colors.black.withValues(
+                                    alpha: widget.isDark ? 0.6 : 0.2,
+                                  ),
+                            blurRadius: isActive ? 20 : 10,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
+                        border: isActive
+                            ? Border.all(
+                                color: const Color(0xFFEB164F),
+                                width: 2.5,
+                              )
+                            : Border.all(
+                                color: widget.isDark
+                                    ? Colors.white24
+                                    : Colors.black12,
+                              ),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(14),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            Image.network(
+                              item.coverUrl,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => Container(
+                                color: widget.isDark
+                                    ? const Color(0xFF2A2E3D)
+                                    : Colors.grey.shade300,
+                                child: const Icon(
+                                  Icons.broken_image,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                            ),
+                            if (!isActive)
+                              Container(
+                                color: widget.isDark
+                                    ? Colors.black.withValues(alpha: 0.35)
+                                    : Colors.white.withValues(alpha: 0.15),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return cardWidgets;
+  }
+}
+
 class LatestReleaseCard extends StatefulWidget {
   final MangaModel item;
   final bool isDark;
@@ -665,7 +1036,7 @@ class _LatestReleaseCardState extends State<LatestReleaseCard> {
       onExit: (_) => setState(() => _isHovered = false),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: widget.isDark
               ? (_isHovered ? const Color(0xFF1A1F2B) : const Color(0xFF121620))
@@ -712,7 +1083,7 @@ class _LatestReleaseCardState extends State<LatestReleaseCard> {
                 ),
               ),
             ),
-            const SizedBox(width: 16),
+            const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -723,12 +1094,12 @@ class _LatestReleaseCardState extends State<LatestReleaseCard> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      fontSize: 15,
+                      fontSize: 14,
                       fontWeight: FontWeight.w700,
                       color: widget.isDark ? Colors.white : Colors.black87,
                     ),
                   ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 4),
                   _HoverableChapterRow(
                     chapterText: '${widget.item.chapter} - Latest Chapter',
                     timeAgo: '1 day ago',
@@ -794,7 +1165,7 @@ class _HoverableChapterRowState extends State<_HoverableChapterRow> {
         onTap: widget.onTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
           decoration: BoxDecoration(
             color: activeColor
                 ? const Color(0xFFEB164F).withValues(alpha: 0.12)
@@ -817,7 +1188,7 @@ class _HoverableChapterRowState extends State<_HoverableChapterRow> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 12,
+                    fontSize: 11,
                     fontWeight:
                         activeColor ? FontWeight.w600 : FontWeight.normal,
                     color: activeColor
@@ -826,10 +1197,11 @@ class _HoverableChapterRowState extends State<_HoverableChapterRow> {
                   ),
                 ),
               ),
+              const SizedBox(width: 4),
               Text(
                 widget.timeAgo,
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: 10,
                   color: widget.isDark ? Colors.white38 : Colors.black45,
                 ),
               ),

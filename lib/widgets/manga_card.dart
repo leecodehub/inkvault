@@ -105,7 +105,7 @@ class _MangaCardState extends State<MangaCard> {
                             borderRadius: BorderRadius.circular(4),
                           ),
                           child: Text(
-                            '#${widget.rank}',
+                            '${widget.rank}',
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 10,
