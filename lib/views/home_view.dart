@@ -6,8 +6,10 @@ import 'package:provider/provider.dart';
 
 import '../constants/app_colors.dart';
 import '../models/manga_model.dart';
+import '../providers/auth_provider.dart';
 import '../providers/manga_provider.dart';
 import '../widgets/manga_card.dart';
+import 'auth/auth_sheet.dart';
 import 'manga_detail_modal.dart';
 
 class HomeView extends StatefulWidget {
@@ -455,29 +457,98 @@ class _3DStackedHeroCarousel extends StatefulWidget {
   State<_3DStackedHeroCarousel> createState() => _3DStackedHeroCarouselState();
 }
 
-class _3DStackedHeroCarouselState extends State<_3DStackedHeroCarousel> {
-  int _activeCardIndex = 0;
+class _3DStackedHeroCarouselState extends State<_3DStackedHeroCarousel>
+    with SingleTickerProviderStateMixin {
+  /// Fractional card position. The rounded value is the active card, so
+  /// dragging spins the wheel continuously and momentum carries it forward.
+  double _position = 0;
   int? _hoveredCardIndex;
-  bool _isBookmarked = false;
 
-  void _nextCard() {
-    setState(() {
-      _activeCardIndex = (_activeCardIndex + 1) % widget.mangaList.length;
+  Animation<double>? _spinAnimation;
+  late final AnimationController _spinController;
+
+  int get _total => widget.mangaList.length;
+
+  int _indexFor(num position) {
+    if (_total == 0) return 0;
+    return ((position.round() % _total) + _total) % _total;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _spinController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    );
+    _spinController.addListener(() {
+      final animation = _spinAnimation;
+      if (animation != null && mounted) {
+        setState(() => _position = animation.value);
+      }
     });
   }
 
-  void _previousCard() {
-    setState(() {
-      _activeCardIndex = (_activeCardIndex - 1 + widget.mangaList.length) %
-          widget.mangaList.length;
-    });
+  @override
+  void dispose() {
+    _spinController.dispose();
+    super.dispose();
+  }
+
+  void _stopSpin() {
+    _spinController.stop();
+    _spinAnimation = null;
+  }
+
+  void _spinTo(double target) {
+    _spinAnimation = Tween<double>(begin: _position, end: target).animate(
+      CurvedAnimation(parent: _spinController, curve: Curves.easeOutCubic),
+    );
+    _spinController.forward(from: 0);
+  }
+
+  void _snack(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  Future<void> _toggleHeroBookmark(MangaModel manga) async {
+    final auth = context.read<AuthProvider>();
+    final result = await auth.toggleBookmark(manga);
+    if (!mounted) return;
+
+    switch (result) {
+      case BookmarkAction.added:
+        _snack('Added to bookmarks.');
+        break;
+      case BookmarkAction.removed:
+        _snack('Removed from bookmarks.');
+        break;
+      case BookmarkAction.requiresLogin:
+        await showAuthSheet(
+          context,
+          isDark: widget.isDark,
+          reason: 'Log in to save bookmarks.',
+        );
+        break;
+      case BookmarkAction.requiresPremium:
+        _snack('Bookmark limit reached. Visit the Coin Shop for Premium.');
+        break;
+      case BookmarkAction.insufficientCoins:
+        _snack('Not enough coins.');
+        break;
+      case BookmarkAction.failed:
+        _snack('Could not update bookmark.');
+        break;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     if (widget.mangaList.isEmpty) return const SizedBox.shrink();
 
-    final activeManga = widget.mangaList[_activeCardIndex];
+    final activeManga = widget.mangaList[_indexFor(_position)];
     final isMobile = MediaQuery.of(context).size.width < 900;
 
     return Container(
@@ -506,12 +577,17 @@ class _3DStackedHeroCarouselState extends State<_3DStackedHeroCarousel> {
       child: ClipRRect(
         borderRadius: BorderRadius.circular(24),
         child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onHorizontalDragStart: (_) => _stopSpin(),
+          onHorizontalDragUpdate: (details) {
+            final double extent = isMobile ? 80 : 70;
+            setState(() => _position -= details.delta.dx / extent);
+          },
           onHorizontalDragEnd: (details) {
-            if (details.primaryVelocity! < 0) {
-              _nextCard();
-            } else if (details.primaryVelocity! > 0) {
-              _previousCard();
-            }
+            final double velocity = details.primaryVelocity ?? 0;
+            // Projected landing point, including momentum from the fling.
+            final double projected = _position - velocity / 2600;
+            _spinTo(projected.roundToDouble());
           },
           child: Stack(
             children: [
@@ -603,7 +679,7 @@ class _3DStackedHeroCarouselState extends State<_3DStackedHeroCarousel> {
                             Expanded(
                               flex: 6,
                               child: Stack(
-                                alignment: Alignment.centerRight,
+                                alignment: Alignment.center,
                                 children: _buildStackedCards(isMobile: false),
                               ),
                             ),
@@ -619,6 +695,7 @@ class _3DStackedHeroCarouselState extends State<_3DStackedHeroCarousel> {
   }
 
   Widget _buildDetailsOverlay(MangaModel manga, {required bool isMobile}) {
+    final auth = context.watch<AuthProvider>();
     final textColorPrimary =
         widget.isDark ? Colors.white : AppColors.lightTextPrimary;
     final textColorSecondary =
@@ -635,98 +712,6 @@ class _3DStackedHeroCarouselState extends State<_3DStackedHeroCarousel> {
             isMobile ? MainAxisAlignment.center : MainAxisAlignment.start,
         mainAxisSize: MainAxisSize.max,
         children: [
-          Wrap(
-            alignment: isMobile ? WrapAlignment.center : WrapAlignment.start,
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              Container(
-                padding: EdgeInsets.symmetric(
-                  horizontal: isMobile ? 8 : 12,
-                  vertical: isMobile ? 4 : 6,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFEB164F),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.local_fire_department,
-                      size: isMobile ? 11 : 14,
-                      color: Colors.white,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      'RANK ${_activeCardIndex + 1}',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: isMobile ? 9 : 11,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                padding: EdgeInsets.symmetric(
-                  horizontal: isMobile ? 8 : 12,
-                  vertical: isMobile ? 4 : 6,
-                ),
-                decoration: BoxDecoration(
-                  color: widget.isDark
-                      ? Colors.white.withValues(alpha: 0.12)
-                      : Colors.black.withValues(alpha: 0.06),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: widget.isDark ? Colors.white24 : Colors.black12,
-                  ),
-                ),
-                child: Text(
-                  manga.category,
-                  style: TextStyle(
-                    color: textColorSecondary,
-                    fontSize: isMobile ? 9 : 11,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              Container(
-                padding: EdgeInsets.symmetric(
-                  horizontal: isMobile ? 8 : 12,
-                  vertical: isMobile ? 4 : 6,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFEB164F).withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: const Color(0xFFEB164F).withValues(alpha: 0.4),
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.whatshot,
-                      size: isMobile ? 11 : 14,
-                      color: const Color(0xFFEB164F),
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      'TRENDING',
-                      style: TextStyle(
-                        color: const Color(0xFFEB164F),
-                        fontSize: isMobile ? 9 : 11,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
           SizedBox(height: isMobile ? 8 : 16),
           SizedBox(
             height: isMobile ? null : 90,
@@ -747,22 +732,20 @@ class _3DStackedHeroCarouselState extends State<_3DStackedHeroCarousel> {
               ),
             ),
           ),
-          if (!isMobile) ...[
-            const SizedBox(height: 8),
-            SizedBox(
-              height: 42,
-              child: Text(
-                'Follow the epic journey, high stakes battles, and breathtaking storylines in this top-rated series.',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: textColorSecondary,
-                  fontSize: 15,
-                  height: 1.35,
-                ),
-              ),
+          const SizedBox(height: 8),
+          Text(
+            manga.description.trim().isEmpty
+                ? 'No description available yet.'
+                : manga.description.trim(),
+            maxLines: isMobile ? 3 : 2,
+            overflow: TextOverflow.ellipsis,
+            textAlign: isMobile ? TextAlign.center : TextAlign.left,
+            style: TextStyle(
+              color: textColorSecondary,
+              fontSize: isMobile ? 12 : 15,
+              height: 1.35,
             ),
-          ],
+          ),
           SizedBox(height: isMobile ? 8 : 12),
           Container(
             padding: EdgeInsets.symmetric(vertical: isMobile ? 6 : 10),
@@ -788,7 +771,7 @@ class _3DStackedHeroCarouselState extends State<_3DStackedHeroCarousel> {
                     ),
                     const SizedBox(width: 4),
                     Text(
-                      '${manga.rating} / 10',
+                      '${manga.ratingLabel} / 10',
                       style: TextStyle(
                         color: const Color(0xFFEB164F),
                         fontWeight: FontWeight.w800,
@@ -798,14 +781,7 @@ class _3DStackedHeroCarouselState extends State<_3DStackedHeroCarousel> {
                   ],
                 ),
                 Text(
-                  '98.2M Reads',
-                  style: TextStyle(
-                    color: textColorSecondary,
-                    fontSize: isMobile ? 11 : 13,
-                  ),
-                ),
-                Text(
-                  '3.1M Bookmarks',
+                  '${manga.followsLabel} Follows',
                   style: TextStyle(
                     color: textColorSecondary,
                     fontSize: isMobile ? 11 : 13,
@@ -845,20 +821,20 @@ class _3DStackedHeroCarouselState extends State<_3DStackedHeroCarousel> {
               ),
               const SizedBox(width: 12),
               IconButton(
-                onPressed: () {
-                  setState(() => _isBookmarked = !_isBookmarked);
-                },
+                onPressed: () => _toggleHeroBookmark(manga),
                 icon: Icon(
-                  _isBookmarked ? Icons.bookmark : Icons.bookmark_outline,
+                  auth.isBookmarked(manga.id)
+                      ? Icons.bookmark
+                      : Icons.bookmark_outline,
                   size: isMobile ? 20 : 24,
-                  color: _isBookmarked
+                  color: auth.isBookmarked(manga.id)
                       ? const Color(0xFFEB164F)
                       : (widget.isDark
                           ? Colors.white
                           : AppColors.lightTextPrimary),
                 ),
                 style: IconButton.styleFrom(
-                  backgroundColor: _isBookmarked
+                  backgroundColor: auth.isBookmarked(manga.id)
                       ? const Color(0xFFEB164F).withValues(alpha: 0.15)
                       : (widget.isDark
                           ? Colors.white.withValues(alpha: 0.08)
@@ -867,7 +843,7 @@ class _3DStackedHeroCarouselState extends State<_3DStackedHeroCarousel> {
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                     side: BorderSide(
-                      color: _isBookmarked
+                      color: auth.isBookmarked(manga.id)
                           ? const Color(0xFFEB164F)
                           : (widget.isDark
                               ? Colors.white.withValues(alpha: 0.15)
@@ -884,45 +860,47 @@ class _3DStackedHeroCarouselState extends State<_3DStackedHeroCarousel> {
   }
 
   List<Widget> _buildStackedCards({required bool isMobile}) {
-    List<Widget> cardWidgets = [];
-    int totalCards = widget.mangaList.length;
+    final int total = _total;
+    if (total == 0) return [];
 
-    List<int> relativeOffsets =
-        isMobile ? [-2, -1, 0, 1, 2] : [-4, -3, -2, -1, 0, 1, 2, 3, 4];
+    // Scale the stack down on very narrow phones so nothing is clipped.
+    final double screenWidth = MediaQuery.of(context).size.width;
+    final bool compact = screenWidth < 380;
+    final double cardWidth = isMobile ? (compact ? 92 : 115) : 210;
+    final double cardHeight = isMobile ? (compact ? 136 : 170) : 320;
+    final double step = isMobile ? (compact ? 30 : 50) : 46;
+    final int span = isMobile ? 2 : 4;
 
-    List<int> sortedOffsets = List.from(relativeOffsets)
-      ..sort((a, b) => b.abs().compareTo(a.abs()));
+    final int base = _position.floor();
+    final List<Widget> cardWidgets = [];
 
-    for (int offset in sortedOffsets) {
-      int itemIndex = (_activeCardIndex + offset) % totalCards;
-      if (itemIndex < 0) itemIndex += totalCards;
+    // Paint farthest cards first so the active (center) card stays on top.
+    final List<int> slots = [
+      for (int k = base - span; k <= base + span; k++) k,
+    ]..sort((a, b) =>
+        (b - _position).abs().compareTo((a - _position).abs()));
 
+    for (final int k in slots) {
+      final double d = k - _position;
+      final int itemIndex = ((k % total) + total) % total;
       final item = widget.mangaList[itemIndex];
-      bool isActive = offset == 0;
-      bool isHovered = _hoveredCardIndex == itemIndex;
+      final bool isActive = d.abs() < 0.5;
+      final bool isHovered = _hoveredCardIndex == itemIndex;
 
-      double scale = isActive ? 1.0 : (1.0 - (offset.abs() * 0.12));
-      double opacity = (1.0 - (offset.abs() * 0.25)).clamp(0.2, 1.0);
-
-      if (isHovered) {
-        scale += 0.05;
-      }
+      double scale = 1.0 - (d.abs() * 0.12);
+      if (scale < 0.55) scale = 0.55;
+      if (isHovered) scale += 0.05;
+      double opacity = (1.0 - (d.abs() * 0.25)).clamp(0.2, 1.0);
 
       cardWidgets.add(
-        AnimatedPositioned(
+        Positioned(
           key: ValueKey<String>('hero_stack_${item.coverUrl}_$itemIndex'),
-          duration: const Duration(milliseconds: 350),
-          curve: Curves.easeOutCubic,
-          right: isMobile ? null : (220.0 - (offset * 52.0)),
-          left: isMobile ? null : null,
+          right: null,
           top: isMobile
               ? (isActive ? 10 : 22.0)
-              : (isActive ? 5 : 20.0 + (offset.abs() * 6.0)),
+              : (isActive ? 5 : 20.0 + (d.abs() * 6.0)),
           child: Transform.translate(
-            offset: Offset(
-              isMobile ? (offset * 50.0) : 0,
-              0,
-            ),
+            offset: Offset(d * step, 0),
             child: MouseRegion(
               onEnter: (_) => setState(() => _hoveredCardIndex = itemIndex),
               onExit: (_) => setState(() => _hoveredCardIndex = null),
@@ -932,19 +910,16 @@ class _3DStackedHeroCarouselState extends State<_3DStackedHeroCarousel> {
                   if (isActive) {
                     widget.onCardTap(item);
                   } else {
-                    setState(() {
-                      _activeCardIndex = itemIndex;
-                    });
+                    _spinTo(k.toDouble());
                   }
                 },
-                child: AnimatedScale(
+                child: Transform.scale(
                   scale: scale,
-                  duration: const Duration(milliseconds: 200),
                   child: Opacity(
                     opacity: opacity,
                     child: Container(
-                      width: isMobile ? 115 : 210,
-                      height: isMobile ? 170 : 320,
+                      width: cardWidth,
+                      height: cardHeight,
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(16),
                         boxShadow: [
@@ -1034,9 +1009,11 @@ class _LatestReleaseCardState extends State<LatestReleaseCard> {
     return MouseRegion(
       onEnter: (_) => setState(() => _isHovered = true),
       onExit: (_) => setState(() => _isHovered = false),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.all(12),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: widget.isDark
               ? (_isHovered ? const Color(0xFF1A1F2B) : const Color(0xFF121620))
@@ -1100,26 +1077,63 @@ class _LatestReleaseCardState extends State<LatestReleaseCard> {
                     ),
                   ),
                   const SizedBox(height: 4),
-                  _HoverableChapterRow(
-                    chapterText: '${widget.item.chapter} - Latest Chapter',
-                    timeAgo: '1 day ago',
-                    isHighlighted: true,
-                    isDark: widget.isDark,
-                    onTap: widget.onTap,
+                  Text(
+                    widget.item.chapter,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: Color(0xFFEB164F),
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                  _HoverableChapterRow(
-                    chapterText: 'Chapter Previous',
-                    timeAgo: 'last week',
-                    isHighlighted: false,
-                    isDark: widget.isDark,
-                    onTap: widget.onTap,
+                  const SizedBox(height: 4),
+                  Text(
+                    widget.item.description.trim().isEmpty
+                        ? 'No description available yet.'
+                        : widget.item.description.trim(),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11,
+                      height: 1.3,
+                      color: widget.isDark ? Colors.white60 : Colors.black54,
+                    ),
                   ),
-                  _HoverableChapterRow(
-                    chapterText: 'Chapter Older',
-                    timeAgo: '2 weeks ago',
-                    isHighlighted: false,
-                    isDark: widget.isDark,
-                    onTap: widget.onTap,
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      const Icon(Icons.star_rounded,
+                          size: 13, color: Colors.amber),
+                      const SizedBox(width: 3),
+                      Text(
+                        widget.item.ratingLabel,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color:
+                              widget.isDark ? Colors.white70 : Colors.black54,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Icon(
+                        Icons.favorite_rounded,
+                        size: 12,
+                        color: widget.isDark
+                            ? Colors.white54
+                            : Colors.black38,
+                      ),
+                      const SizedBox(width: 3),
+                      Text(
+                        widget.item.followsLabel,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color:
+                              widget.isDark ? Colors.white70 : Colors.black54,
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -1127,88 +1141,10 @@ class _LatestReleaseCardState extends State<LatestReleaseCard> {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _HoverableChapterRow extends StatefulWidget {
-  final String chapterText;
-  final String timeAgo;
-  final bool isHighlighted;
-  final bool isDark;
-  final VoidCallback onTap;
-
-  const _HoverableChapterRow({
-    required this.chapterText,
-    required this.timeAgo,
-    required this.isHighlighted,
-    required this.isDark,
-    required this.onTap,
-  });
-
-  @override
-  State<_HoverableChapterRow> createState() => _HoverableChapterRowState();
-}
-
-class _HoverableChapterRowState extends State<_HoverableChapterRow> {
-  bool _isHovered = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final activeColor = widget.isHighlighted || _isHovered;
-
-    return MouseRegion(
-      onEnter: (_) => setState(() => _isHovered = true),
-      onExit: (_) => setState(() => _isHovered = false),
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-          decoration: BoxDecoration(
-            color: activeColor
-                ? const Color(0xFFEB164F).withValues(alpha: 0.12)
-                : (widget.isDark
-                    ? const Color(0xFF161A24)
-                    : Colors.grey.shade100),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: activeColor
-                  ? const Color(0xFFEB164F).withValues(alpha: 0.3)
-                  : Colors.transparent,
-            ),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(
-                child: Text(
-                  widget.chapterText,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight:
-                        activeColor ? FontWeight.w600 : FontWeight.normal,
-                    color: activeColor
-                        ? const Color(0xFFEB164F)
-                        : (widget.isDark ? Colors.white70 : Colors.black87),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 4),
-              Text(
-                widget.timeAgo,
-                style: TextStyle(
-                  fontSize: 10,
-                  color: widget.isDark ? Colors.white38 : Colors.black45,
-                ),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }
 }
+
+// End of file.
+

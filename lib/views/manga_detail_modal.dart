@@ -2,11 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../constants/app_colors.dart';
+import '../constants/app_config.dart';
 import '../models/chapter_model.dart';
 import '../models/manga_model.dart';
-import '../providers/bookmark_provider.dart';
-import '../providers/coin_provider.dart';
+import '../providers/auth_provider.dart';
 import '../repositories/manga_repository.dart';
+import 'auth/auth_sheet.dart';
 import 'reader_view.dart';
 
 class MangaDetailModal extends StatefulWidget {
@@ -24,8 +25,8 @@ class MangaDetailModal extends StatefulWidget {
 }
 
 class _MangaDetailModalState extends State<MangaDetailModal> {
-  static const int _lockedChapterCount = 2;
-  static const int _unlockCost = 5;
+  static const int _lockedChapterCount = AppConfig.lockedChapterCount;
+  static const int _unlockCost = AppConfig.chapterUnlockCost;
 
   final MangaRepository _repository = MangaRepository();
 
@@ -39,16 +40,14 @@ class _MangaDetailModalState extends State<MangaDetailModal> {
   }
 
   Future<void> _loadChapters() async {
-    setState(() {
-      _isLoadingChapters = true;
-    });
+    setState(() => _isLoadingChapters = true);
 
     final List<ChapterModel> chapters =
         await _repository.getChapters(widget.manga.id);
 
     if (!mounted) return;
     setState(() {
-      // Gate the most recent chapters behind coins; the feed is newest-first.
+      // Gate the newest chapters behind coins; the feed is newest-first.
       _chapters = [
         for (int i = 0; i < chapters.length; i++)
           chapters[i].copyWith(
@@ -60,91 +59,94 @@ class _MangaDetailModalState extends State<MangaDetailModal> {
     });
   }
 
-  void _handleUnlockChapter(
-    BuildContext context,
-    ChapterModel ch,
-    CoinProvider coinProvider,
-  ) {
-    final isDark = widget.isDark;
-    if (coinProvider.coins >= ch.coinCost) {
-      showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          backgroundColor:
-              isDark ? AppColors.darkSurface : AppColors.lightSurface,
-          title: Text('Unlock Chapter ${ch.chapterNumber}?'),
-          content:
-              Text('Unlocking "${ch.title}" will cost ${ch.coinCost} coins.'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              style:
-                  ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
-              onPressed: () {
-                final scaffoldMessenger = ScaffoldMessenger.of(context);
-                final navigator = Navigator.of(context);
+  void _snack(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
 
-                final success = coinProvider.spendCoins(ch.coinCost);
-                Navigator.pop(ctx);
+  // ---- Bookmarks ----
 
-                if (success) {
-                  scaffoldMessenger.showSnackBar(
-                    SnackBar(
-                      content: Text('Unlocked Chapter ${ch.chapterNumber}!'),
-                    ),
-                  );
-                  // Open Chapter in ReaderView after unlock
-                  navigator.pop(); // Close sheet
-                  navigator.push(
-                    MaterialPageRoute(
-                      builder: (_) => ReaderView(
-                        manga: widget.manga,
-                        chapter: ch,
-                        isDark: isDark,
-                      ),
-                    ),
-                  );
-                }
-              },
-              child: Text(
-                'Unlock (${ch.coinCost} Coins)',
-                style: const TextStyle(color: Colors.white),
-              ),
-            ),
-          ],
-        ),
-      );
-    } else {
-      showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          backgroundColor:
-              isDark ? AppColors.darkSurface : AppColors.lightSurface,
-          title: const Text('Insufficient Coins'),
-          content: Text(
-            'You need ${ch.coinCost} coins to unlock Chapter ${ch.chapterNumber}. You currently have ${coinProvider.coins} coins.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              style:
-                  ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
-              onPressed: () {
-                Navigator.pop(ctx);
-              },
-              child: const Text('OK', style: TextStyle(color: Colors.white)),
-            ),
-          ],
-        ),
-      );
+  Future<void> _handleBookmark(AuthProvider auth) async {
+    final result = await auth.toggleBookmark(widget.manga);
+    if (!mounted) return;
+
+    switch (result) {
+      case BookmarkAction.added:
+        _snack('Added to bookmarks.');
+        break;
+      case BookmarkAction.removed:
+        _snack('Removed from bookmarks.');
+        break;
+      case BookmarkAction.requiresLogin:
+        await showAuthSheet(
+          context,
+          isDark: widget.isDark,
+          reason: 'Log in to save bookmarks.',
+        );
+        break;
+      case BookmarkAction.requiresPremium:
+        _showBookmarkLimitDialog(auth);
+        break;
+      case BookmarkAction.insufficientCoins:
+        _snack('Not enough coins.');
+        break;
+      case BookmarkAction.failed:
+        _snack('Could not update bookmark.');
+        break;
     }
   }
+
+  void _showBookmarkLimitDialog(AuthProvider auth) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor:
+            widget.isDark ? AppColors.darkSurface : AppColors.lightSurface,
+        title: const Text('Bookmark limit reached'),
+        content: Text(
+          'Free accounts can save up to ${AppConfig.freeBookmarkLimit} bookmarks.\n\n'
+          'Get Premium for unlimited bookmarks, or pay '
+          '${AppConfig.extraBookmarkCost} coins for this one.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final result = await auth.purchaseBookmark(widget.manga);
+              if (!mounted) return;
+              _snack(result == BookmarkAction.added
+                  ? 'Bookmark added.'
+                  : 'Not enough coins.');
+            },
+            child: Text('Pay ${AppConfig.extraBookmarkCost} coins'),
+          ),
+          ElevatedButton(
+            style:
+                ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final result = await auth.buyPremiumAndBookmark(widget.manga);
+              if (!mounted) return;
+              _snack(result == BookmarkAction.added
+                  ? 'Premium active — bookmark added!'
+                  : 'Not enough coins for Premium.');
+            },
+            child: const Text(
+              'Get Premium',
+              style: TextStyle(color: Colors.white),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---- Chapters ----
 
   void _openReader(ChapterModel chapter) {
     final navigator = Navigator.of(context);
@@ -160,13 +162,105 @@ class _MangaDetailModalState extends State<MangaDetailModal> {
     );
   }
 
+  Future<void> _handleChapter(AuthProvider auth, ChapterModel ch) async {
+    final bool needsLogin = !auth.isLoggedIn;
+    final bool alreadyUnlocked =
+        auth.isChapterUnlocked(ch.id) || auth.isPremium;
+    final bool locked = ch.isLocked && !alreadyUnlocked;
+
+    if (!locked) {
+      if (ch.isLocked) {
+        await auth.unlockChapter(ch.id, ch.coinCost);
+      }
+      if (!mounted) return;
+      _openReader(ch);
+      return;
+    }
+
+    if (needsLogin) {
+      await showAuthSheet(
+        context,
+        isDark: widget.isDark,
+        reason: 'Log in to unlock premium chapters.',
+      );
+      return;
+    }
+
+    if (auth.coins < ch.coinCost) {
+      _showInsufficientDialog(auth, ch);
+      return;
+    }
+
+    _confirmUnlock(auth, ch);
+  }
+
+  void _showInsufficientDialog(AuthProvider auth, ChapterModel ch) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor:
+            widget.isDark ? AppColors.darkSurface : AppColors.lightSurface,
+        title: const Text('Not enough coins'),
+        content: Text(
+          'You need ${ch.coinCost} coins to unlock Chapter ${ch.chapterNumber}. '
+          'You have ${auth.coins}. Visit the Coin Shop from the menu to top up, '
+          'or get Premium to read new chapters free.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmUnlock(AuthProvider auth, ChapterModel ch) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor:
+            widget.isDark ? AppColors.darkSurface : AppColors.lightSurface,
+        title: Text('Unlock Chapter ${ch.chapterNumber}?'),
+        content: Text(
+          'Unlocking "${ch.title}" costs ${ch.coinCost} coins.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style:
+                ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final ok = await auth.unlockChapter(ch.id, ch.coinCost);
+              if (!mounted) return;
+              if (ok) {
+                _snack('Unlocked Chapter ${ch.chapterNumber}!');
+                _openReader(ch);
+              } else {
+                _snack('Not enough coins.');
+              }
+            },
+            child: Text(
+              'Unlock (${ch.coinCost} Coins)',
+              style: const TextStyle(color: Colors.white),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final manga = widget.manga;
     final isDark = widget.isDark;
-    final coinProvider = Provider.of<CoinProvider>(context);
-    final bookmarkProvider = Provider.of<BookmarkProvider>(context);
-    final isBookmarked = bookmarkProvider.isBookmarked(manga.id);
+    final auth = context.watch<AuthProvider>();
+    final isBookmarked = auth.isBookmarked(manga.id);
 
     final bg = isDark ? AppColors.darkCanvas : AppColors.lightCanvas;
     final textPrimary =
@@ -185,7 +279,6 @@ class _MangaDetailModalState extends State<MangaDetailModal> {
       ),
       child: Column(
         children: [
-          // Drag Handle bar
           Container(
             margin: const EdgeInsets.symmetric(vertical: 12),
             width: 40,
@@ -195,14 +288,12 @@ class _MangaDetailModalState extends State<MangaDetailModal> {
               borderRadius: BorderRadius.circular(2),
             ),
           ),
-
           Expanded(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.all(24),
+              padding: const EdgeInsets.all(20),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Top Header Banner
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -210,13 +301,13 @@ class _MangaDetailModalState extends State<MangaDetailModal> {
                         borderRadius: BorderRadius.circular(8),
                         child: Image.network(
                           manga.coverUrl,
-                          width: 110,
-                          height: 160,
+                          width: 100,
+                          height: 148,
                           fit: BoxFit.cover,
                           errorBuilder: (context, error, stackTrace) =>
                               Container(
-                            width: 110,
-                            height: 160,
+                            width: 100,
+                            height: 148,
                             color: isDark
                                 ? AppColors.darkCard
                                 : AppColors.lightCard,
@@ -230,14 +321,15 @@ class _MangaDetailModalState extends State<MangaDetailModal> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Expanded(
                                   child: Text(
                                     manga.title,
+                                    maxLines: 3,
+                                    overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
-                                      fontSize: 20,
+                                      fontSize: 18,
                                       fontWeight: FontWeight.bold,
                                       color: textPrimary,
                                       fontFamily: 'Plus Jakarta Sans',
@@ -245,9 +337,10 @@ class _MangaDetailModalState extends State<MangaDetailModal> {
                                   ),
                                 ),
                                 IconButton(
-                                  onPressed: () {
-                                    bookmarkProvider.toggleBookmark(manga);
-                                  },
+                                  onPressed: () => _handleBookmark(auth),
+                                  tooltip: isBookmarked
+                                      ? 'Remove bookmark'
+                                      : 'Add bookmark',
                                   icon: Icon(
                                     isBookmarked
                                         ? Icons.bookmark_rounded
@@ -284,18 +377,21 @@ class _MangaDetailModalState extends State<MangaDetailModal> {
                                     color: Colors.amber, size: 18),
                                 const SizedBox(width: 4),
                                 Text(
-                                  manga.rating,
+                                  manga.ratingLabel,
                                   style: TextStyle(
                                     color: textPrimary,
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),
                                 const SizedBox(width: 16),
-                                Text(
-                                  manga.chapter,
-                                  style: TextStyle(
-                                    color: textSecondary,
-                                    fontSize: 13,
+                                Flexible(
+                                  child: Text(
+                                    manga.chapter,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: textSecondary,
+                                      fontSize: 13,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -306,9 +402,36 @@ class _MangaDetailModalState extends State<MangaDetailModal> {
                     ],
                   ),
 
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 20),
 
-                  // Synopsis Text
+                  // Premium hint
+                  if (auth.isPremium)
+                    Container(
+                      width: double.infinity,
+                      margin: const EdgeInsets.only(bottom: 16),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: AppColors.primary.withValues(alpha: 0.4),
+                        ),
+                      ),
+                      child: const Row(
+                        children: [
+                          Icon(Icons.workspace_premium_rounded,
+                              color: AppColors.primary, size: 18),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Premium active — new chapters are free to read.',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
                   Text(
                     'Synopsis',
                     style: TextStyle(
@@ -319,7 +442,9 @@ class _MangaDetailModalState extends State<MangaDetailModal> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Follow the journey in this action-packed series. Dive deep into dungeons, unlock powerful skills, and rise to become the supreme hunter.',
+                    manga.description.trim().isEmpty
+                        ? 'No description available yet.'
+                        : manga.description.trim(),
                     style: TextStyle(
                       color: textSecondary,
                       fontSize: 13,
@@ -327,9 +452,8 @@ class _MangaDetailModalState extends State<MangaDetailModal> {
                     ),
                   ),
 
-                  const SizedBox(height: 28),
+                  const SizedBox(height: 24),
 
-                  // Chapter List Header
                   Text(
                     'Chapters (${_chapters.length})',
                     style: TextStyle(
@@ -340,9 +464,8 @@ class _MangaDetailModalState extends State<MangaDetailModal> {
                   ),
                   const SizedBox(height: 12),
 
-                  // Chapter List Items
                   _buildChapterList(
-                    coinProvider: coinProvider,
+                    auth: auth,
                     textPrimary: textPrimary,
                     textSecondary: textSecondary,
                     isDark: isDark,
@@ -357,7 +480,7 @@ class _MangaDetailModalState extends State<MangaDetailModal> {
   }
 
   Widget _buildChapterList({
-    required CoinProvider coinProvider,
+    required AuthProvider auth,
     required Color textPrimary,
     required Color textSecondary,
     required bool isDark,
@@ -377,7 +500,7 @@ class _MangaDetailModalState extends State<MangaDetailModal> {
         child: Column(
           children: [
             Text(
-              'No readable English chapters found.',
+              'No Korean chapters found.',
               style: TextStyle(color: textSecondary, fontSize: 13),
             ),
             const SizedBox(height: 12),
@@ -401,12 +524,17 @@ class _MangaDetailModalState extends State<MangaDetailModal> {
       ),
       itemBuilder: (context, index) {
         final ch = _chapters[index];
+        final unlocked = auth.isChapterUnlocked(ch.id) || auth.isPremium;
+        final showLock = ch.isLocked && !unlocked;
+
         return Material(
           color: Colors.transparent,
           child: ListTile(
             contentPadding: EdgeInsets.zero,
             title: Text(
               'Chapter ${ch.chapterNumber}: ${ch.title}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontSize: 14,
                 color: textPrimary,
@@ -417,13 +545,9 @@ class _MangaDetailModalState extends State<MangaDetailModal> {
               ch.releaseDate,
               style: TextStyle(fontSize: 11, color: textSecondary),
             ),
-            trailing: ch.isLocked
+            trailing: showLock
                 ? ElevatedButton.icon(
-                    onPressed: () => _handleUnlockChapter(
-                      context,
-                      ch,
-                      coinProvider,
-                    ),
+                    onPressed: () => _handleChapter(auth, ch),
                     icon: const Icon(Icons.lock_rounded, size: 14),
                     label: Text('${ch.coinCost} Coins'),
                     style: ElevatedButton.styleFrom(
@@ -438,13 +562,7 @@ class _MangaDetailModalState extends State<MangaDetailModal> {
                     size: 14,
                     color: textSecondary,
                   ),
-            onTap: ch.isLocked
-                ? () => _handleUnlockChapter(
-                      context,
-                      ch,
-                      coinProvider,
-                    )
-                : () => _openReader(ch),
+            onTap: () => _handleChapter(auth, ch),
           ),
         );
       },

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../constants/app_config.dart';
 import '../models/manga_model.dart';
 import '../repositories/manga_repository.dart';
 
@@ -19,11 +20,11 @@ class MangaProvider extends ChangeNotifier {
   String? _latestError;
 
   // Directory (All Series) server-side pagination + filters
-  static const int _directoryLimit = 50;
+  static const int _directoryLimit = AppConfig.directoryPageSize;
   int _directoryPage = 0;
   int _directoryTotal = 0;
   String _directoryQuery = '';
-  String _directoryGenre = 'All';
+  List<String> _directoryGenres = <String>[];
   String _directorySort = 'Popularity';
   Map<String, String>? _tagNameToId;
 
@@ -39,15 +40,22 @@ class MangaProvider extends ChangeNotifier {
   String? get latestError => _latestError;
 
   int get directoryPage => _directoryPage;
-  int get directoryTotal => _directoryTotal;
+
+  /// Total series exposed, capped at [AppConfig.maxDirectoryEntries].
+  int get directoryTotal {
+    return _directoryTotal > AppConfig.maxDirectoryEntries
+        ? AppConfig.maxDirectoryEntries
+        : _directoryTotal;
+  }
+
   int get directoryLimit => _directoryLimit;
   String get directoryQuery => _directoryQuery;
-  String get directoryGenre => _directoryGenre;
+  List<String> get directoryGenres => _directoryGenres;
   String get directorySort => _directorySort;
 
   /// Number of pages in the currently filtered directory result.
   int get directoryTotalPages =>
-      _directoryTotal <= 0 ? 1 : (_directoryTotal / _directoryLimit).ceil();
+      directoryTotal <= 0 ? 1 : (directoryTotal / _directoryLimit).ceil();
 
   /// Loads trending manhwa from repository
   Future<void> loadTrendingManga({int limit = 12}) async {
@@ -60,7 +68,7 @@ class MangaProvider extends ChangeNotifier {
       if (results.isEmpty) {
         _errorMessage = 'No manhwa found or failed to connect.';
       } else {
-        _trendingManga = results;
+        _trendingManga = await _repository.enrichWithStats(results);
       }
     } catch (e) {
       _errorMessage = 'Failed to fetch series. Please check your connection.';
@@ -78,14 +86,21 @@ class MangaProvider extends ChangeNotifier {
   Future<void> loadDirectoryPage({
     int page = 0,
     String? query,
-    String? genre,
+    List<String>? genres,
     String? sortBy,
   }) async {
     if (_isLoadingDirectory) return;
 
     _directoryPage = page < 0 ? 0 : page;
+
+    // Never page past the 1,000-series cap.
+    if (_directoryPage > 0 &&
+        _directoryPage * _directoryLimit >= AppConfig.maxDirectoryEntries) {
+      return;
+    }
+
     if (query != null) _directoryQuery = query;
-    if (genre != null) _directoryGenre = genre;
+    if (genres != null) _directoryGenres = List<String>.from(genres);
     if (sortBy != null) _directorySort = sortBy;
 
     _isLoadingDirectory = true;
@@ -93,22 +108,26 @@ class MangaProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      String? tagId;
-      if (_directoryGenre != 'All') {
+      List<String> tagIds = const [];
+      if (_directoryGenres.isNotEmpty) {
         final tags = await _loadTagMap();
-        tagId = tags[_directoryGenre.toLowerCase()];
+        tagIds = _directoryGenres
+            .map((g) => tags[g.toLowerCase()])
+            .whereType<String>()
+            .toList();
       }
 
       final result = await _repository.getDirectoryPage(
         limit: _directoryLimit,
         offset: _directoryPage * _directoryLimit,
         title: _directoryQuery.trim().isEmpty ? null : _directoryQuery.trim(),
-        tagId: tagId,
+        tagIds: tagIds,
+        tagMode: 'or',
         orderKey: _orderKey,
         ascending: _orderAscending,
       );
 
-      _directoryManga = result.items;
+      _directoryManga = await _repository.enrichWithStats(result.items);
       _directoryTotal = result.total;
     } catch (e) {
       _directoryError = 'Failed to fetch series. Please try again.';
@@ -148,7 +167,7 @@ class MangaProvider extends ChangeNotifier {
 
     try {
       final results = await _repository.getLatestReleases(limit: limit);
-      _latestReleases = results;
+      _latestReleases = await _repository.enrichWithStats(results);
       if (results.isEmpty) {
         _latestError = 'No recent releases found.';
       }

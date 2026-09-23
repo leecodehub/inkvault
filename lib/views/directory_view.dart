@@ -5,9 +5,13 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../constants/app_colors.dart';
+import '../models/chapter_model.dart';
 import '../models/manga_model.dart';
 import '../providers/manga_provider.dart';
+import '../repositories/manga_repository.dart';
+import '../widgets/genre_filter_sheet.dart';
 import 'manga_detail_modal.dart';
+import 'reader_view.dart';
 
 class DirectoryView extends StatefulWidget {
   final bool isDark;
@@ -30,6 +34,10 @@ class _DirectoryViewState extends State<DirectoryView> {
   Timer? _searchDebounce;
 
   int? _hoveredCardIndex;
+
+  final MangaRepository _repository = MangaRepository();
+  final Map<String, List<ChapterModel>> _hoverChapters = {};
+  final Set<String> _hoverLoading = {};
 
   bool _canScrollLeft = false;
   bool _canScrollRight = true;
@@ -90,16 +98,38 @@ class _DirectoryViewState extends State<DirectoryView> {
     });
   }
 
-  void _selectGenre(String genre) {
-    context.read<MangaProvider>().loadDirectoryPage(page: 0, genre: genre);
+  void _toggleGenre(String genre) {
+    final provider = context.read<MangaProvider>();
+    final current = List<String>.from(provider.directoryGenres);
+    if (current.contains(genre)) {
+      current.remove(genre);
+    } else {
+      current.add(genre);
+    }
+    provider.loadDirectoryPage(page: 0, genres: current);
+  }
 
-    if (genre == 'All' && _genreScrollController.hasClients) {
+  void _clearGenres() {
+    context.read<MangaProvider>().loadDirectoryPage(page: 0, genres: const []);
+    if (_genreScrollController.hasClients) {
       _genreScrollController.animateTo(
         0.0,
         duration: const Duration(milliseconds: 350),
         curve: Curves.easeInOut,
       );
     }
+  }
+
+  Future<void> _openGenreFilter() async {
+    final provider = context.read<MangaProvider>();
+    final result = await showGenreFilterSheet(
+      context,
+      isDark: widget.isDark,
+      allGenres: _genres,
+      selected: provider.directoryGenres,
+    );
+    if (result == null) return;
+    provider.loadDirectoryPage(page: 0, genres: result);
   }
 
   void _selectSort(String sortBy) {
@@ -143,6 +173,61 @@ class _DirectoryViewState extends State<DirectoryView> {
     );
   }
 
+  void _openReader(MangaModel manga, ChapterModel chapter) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ReaderView(
+          manga: manga,
+          chapter: chapter,
+          isDark: widget.isDark,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _ensureHoverChapters(String mangaId) async {
+    if (_hoverChapters.containsKey(mangaId) || _hoverLoading.contains(mangaId)) {
+      return;
+    }
+    _hoverLoading.add(mangaId);
+    final chapters = await _repository.getChapters(mangaId);
+    if (!mounted) return;
+    setState(() {
+      _hoverChapters[mangaId] = chapters.take(3).toList();
+      _hoverLoading.remove(mangaId);
+    });
+  }
+
+  Widget _chapterRow(
+      MangaModel manga, ChapterModel chapter, Color textPrimary) {
+    return InkWell(
+      onTap: () => _openReader(manga, chapter),
+      borderRadius: BorderRadius.circular(4),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Row(
+          children: [
+            const Icon(Icons.play_arrow_rounded,
+                size: 13, color: AppColors.primary),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Text(
+                'Ch. ${chapter.chapterNumber}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: AppColors.primary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   List<String> _getOrderedSortItems(String currentSort) {
     if (currentSort == 'Title') {
       return ['Title', 'Popularity', 'Rating'];
@@ -182,12 +267,9 @@ class _DirectoryViewState extends State<DirectoryView> {
       ),
       child: Consumer<MangaProvider>(
         builder: (context, provider, child) {
-          final selectedGenre =
-              provider.directoryGenre.isEmpty ? 'All' : provider.directoryGenre;
+          final selectedGenres = provider.directoryGenres;
           final currentSort = provider.directorySort;
           final sortOptions = _getOrderedSortItems(currentSort);
-
-          final allGenresList = ['All', ..._genres];
 
           return SingleChildScrollView(
             padding: EdgeInsets.all(isMobile ? 16.0 : 24.0),
@@ -260,119 +342,33 @@ class _DirectoryViewState extends State<DirectoryView> {
                       ),
                       const SizedBox(height: 10),
 
-                      // Mobile Filter Bar: Genre Dropdown & Sort Dropdown side-by-side
+                      // Mobile Filter Bar: Genres button & Sort dropdown
                       Row(
                         children: [
-                          // Genre Dropdown
                           Expanded(
-                            child: Container(
-                              height: 38,
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 12),
-                              decoration: BoxDecoration(
-                                color: inputFill,
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(
-                                  color: selectedGenre != 'All'
-                                      ? AppColors.primary
-                                      : borderStyle,
-                                ),
-                              ),
-                              child: DropdownButtonHideUnderline(
-                                child: DropdownButton<String>(
-                                  value: allGenresList.contains(selectedGenre)
-                                      ? selectedGenre
-                                      : 'All',
-                                  dropdownColor: inputFill,
-                                  isExpanded: true,
-                                  borderRadius: BorderRadius.circular(16),
-                                  style: TextStyle(
-                                    color: textPrimary,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                  icon: Icon(
-                                    Icons.keyboard_arrow_down_rounded,
-                                    color: textSecondary,
-                                    size: 18,
-                                  ),
-                                  items: allGenresList.map((String val) {
-                                    final isCurrent = val == selectedGenre;
-                                    return DropdownMenuItem<String>(
-                                      value: val,
-                                      child: Text(
-                                        val == 'All' ? 'Genre: All' : val,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          color: isCurrent
-                                              ? AppColors.primary
-                                              : textPrimary,
-                                          fontWeight: isCurrent
-                                              ? FontWeight.bold
-                                              : FontWeight.normal,
-                                        ),
-                                      ),
-                                    );
-                                  }).toList(),
-                                  onChanged: (newVal) {
-                                    if (newVal != null) _selectGenre(newVal);
-                                  },
-                                ),
-                              ),
+                            child: _filterButton(
+                              label: selectedGenres.isEmpty
+                                  ? 'Genres'
+                                  : 'Genres (${selectedGenres.length})',
+                              active: selectedGenres.isNotEmpty,
+                              inputFill: inputFill,
+                              borderStyle: borderStyle,
+                              textPrimary: textPrimary,
+                              textSecondary: textSecondary,
+                              onTap: _openGenreFilter,
                             ),
                           ),
                           const SizedBox(width: 8),
-
-                          // Sort Dropdown
                           Expanded(
-                            child: Container(
-                              height: 38,
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 12),
-                              decoration: BoxDecoration(
-                                color: inputFill,
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(color: borderStyle),
-                              ),
-                              child: DropdownButtonHideUnderline(
-                                child: DropdownButton<String>(
-                                  value: currentSort,
-                                  dropdownColor: inputFill,
-                                  isExpanded: true,
-                                  borderRadius: BorderRadius.circular(16),
-                                  style: TextStyle(
-                                    color: textPrimary,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                  icon: Icon(
-                                    Icons.keyboard_arrow_down_rounded,
-                                    color: textSecondary,
-                                    size: 18,
-                                  ),
-                                  items: sortOptions.map((String val) {
-                                    final isCurrent = val == currentSort;
-                                    return DropdownMenuItem<String>(
-                                      value: val,
-                                      child: Text(
-                                        'Sort: $val',
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          color: isCurrent
-                                              ? AppColors.primary
-                                              : textPrimary,
-                                          fontWeight: isCurrent
-                                              ? FontWeight.bold
-                                              : FontWeight.normal,
-                                        ),
-                                      ),
-                                    );
-                                  }).toList(),
-                                  onChanged: (newVal) {
-                                    if (newVal != null) _selectSort(newVal);
-                                  },
-                                ),
-                              ),
+                            child: _sortDropdown(
+                              value: currentSort,
+                              options: sortOptions,
+                              inputFill: inputFill,
+                              borderStyle: borderStyle,
+                              textPrimary: textPrimary,
+                              textSecondary: textSecondary,
+                              onChanged: _selectSort,
+                              expand: true,
                             ),
                           ),
                         ],
@@ -384,35 +380,43 @@ class _DirectoryViewState extends State<DirectoryView> {
                   Row(
                     key: _topKey,
                     crossAxisAlignment: CrossAxisAlignment.center,
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'All Series',
-                            style: TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.bold,
-                              color: textPrimary,
-                              fontFamily: 'Plus Jakarta Sans',
-                            ),
-                          ),
-                          if (provider.directoryTotal > 0) ...[
-                            const SizedBox(height: 2),
+                      Expanded(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
                             Text(
-                              '${provider.directoryTotal} series • Page '
-                              '${provider.directoryPage + 1} of '
-                              '${provider.directoryTotalPages}',
+                              'All Series',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                fontSize: 12,
-                                color: textSecondary,
+                                fontSize: 22,
+                                fontWeight: FontWeight.bold,
+                                color: textPrimary,
+                                fontFamily: 'Plus Jakarta Sans',
                               ),
                             ),
+                            if (provider.directoryTotal > 0) ...[
+                              const SizedBox(height: 2),
+                              Text(
+                                '${provider.directoryTotal} series • Page '
+                                '${provider.directoryPage + 1} of '
+                                '${provider.directoryTotalPages}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: textSecondary,
+                                ),
+                              ),
+                            ],
                           ],
-                        ],
+                        ),
                       ),
+                      const SizedBox(width: 16),
                       Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
                           SizedBox(
                             width: 220,
@@ -449,54 +453,14 @@ class _DirectoryViewState extends State<DirectoryView> {
                             size: 18,
                           ),
                           const SizedBox(width: 12),
-                          Container(
-                            height: 40,
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            decoration: BoxDecoration(
-                              color: inputFill,
-                              borderRadius: BorderRadius.circular(24),
-                              border: Border.all(color: borderStyle),
-                            ),
-                            child: DropdownButtonHideUnderline(
-                              child: DropdownButton<String>(
-                                value: currentSort,
-                                dropdownColor: inputFill,
-                                borderRadius: BorderRadius.circular(16),
-                                style: TextStyle(
-                                  color: textPrimary,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                                icon: Padding(
-                                  padding: const EdgeInsets.only(left: 6),
-                                  child: Icon(
-                                    Icons.keyboard_arrow_down_rounded,
-                                    color: textSecondary,
-                                    size: 18,
-                                  ),
-                                ),
-                                items: sortOptions.map((String val) {
-                                  final isCurrent = val == currentSort;
-                                  return DropdownMenuItem<String>(
-                                    value: val,
-                                    child: Text(
-                                      val,
-                                      style: TextStyle(
-                                        color: isCurrent
-                                            ? AppColors.primary
-                                            : textPrimary,
-                                        fontWeight: isCurrent
-                                            ? FontWeight.bold
-                                            : FontWeight.normal,
-                                      ),
-                                    ),
-                                  );
-                                }).toList(),
-                                onChanged: (newVal) {
-                                  if (newVal != null) _selectSort(newVal);
-                                },
-                              ),
-                            ),
+                          _sortDropdown(
+                            value: currentSort,
+                            options: sortOptions,
+                            inputFill: inputFill,
+                            borderStyle: borderStyle,
+                            textPrimary: textPrimary,
+                            textSecondary: textSecondary,
+                            onChanged: _selectSort,
                           ),
                         ],
                       ),
@@ -510,9 +474,8 @@ class _DirectoryViewState extends State<DirectoryView> {
                     children: [
                       _buildGenreChip(
                         label: 'ALL',
-                        isSelected:
-                            selectedGenre == 'All' || selectedGenre.isEmpty,
-                        onTap: () => _selectGenre('All'),
+                        isSelected: selectedGenres.isEmpty,
+                        onTap: _clearGenres,
                         cardBg: cardBg,
                         textPrimary: textPrimary,
                       ),
@@ -529,26 +492,29 @@ class _DirectoryViewState extends State<DirectoryView> {
                         iconColor: textSecondary,
                       ),
                       const SizedBox(width: 4),
-                      SizedBox(
-                        width: 480,
-                        child: SingleChildScrollView(
-                          controller: _genreScrollController,
-                          scrollDirection: Axis.horizontal,
-                          physics: const BouncingScrollPhysics(),
-                          child: Row(
-                            children: _genres.map((genre) {
-                              final isSelected = selectedGenre == genre;
-                              return Padding(
-                                padding: const EdgeInsets.only(right: 8.0),
-                                child: _buildGenreChip(
-                                  label: genre,
-                                  isSelected: isSelected,
-                                  onTap: () => _selectGenre(genre),
-                                  cardBg: cardBg,
-                                  textPrimary: textPrimary,
-                                ),
-                              );
-                            }).toList(),
+                      Flexible(
+                        child: SizedBox(
+                          width: 480,
+                          child: SingleChildScrollView(
+                            controller: _genreScrollController,
+                            scrollDirection: Axis.horizontal,
+                            physics: const BouncingScrollPhysics(),
+                            child: Row(
+                              children: _genres.map((genre) {
+                                final isSelected =
+                                    selectedGenres.contains(genre);
+                                return Padding(
+                                  padding: const EdgeInsets.only(right: 8.0),
+                                  child: _buildGenreChip(
+                                    label: genre,
+                                    isSelected: isSelected,
+                                    onTap: () => _toggleGenre(genre),
+                                    cardBg: cardBg,
+                                    textPrimary: textPrimary,
+                                  ),
+                                );
+                              }).toList(),
+                            ),
                           ),
                         ),
                       ),
@@ -623,7 +589,7 @@ class _DirectoryViewState extends State<DirectoryView> {
                         itemCount: provider.directoryManga.length,
                         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: crossAxisCount,
-                          mainAxisExtent: isMobile ? 128 : 140,
+                          mainAxisExtent: isMobile ? 148 : 160,
                           crossAxisSpacing: isMobile ? 12 : 16,
                           mainAxisSpacing: isMobile ? 12 : 16,
                         ),
@@ -632,8 +598,10 @@ class _DirectoryViewState extends State<DirectoryView> {
                           final isHovered = _hoveredCardIndex == index;
 
                           return MouseRegion(
-                            onEnter: (_) =>
-                                setState(() => _hoveredCardIndex = index),
+                            onEnter: (_) {
+                              setState(() => _hoveredCardIndex = index);
+                              _ensureHoverChapters(item.id);
+                            },
                             onExit: (_) =>
                                 setState(() => _hoveredCardIndex = null),
                             cursor: SystemMouseCursors.click,
@@ -717,7 +685,7 @@ class _DirectoryViewState extends State<DirectoryView> {
                                                     color: Colors.amber),
                                                 const SizedBox(width: 2),
                                                 Text(
-                                                  item.rating,
+                                                  item.ratingLabel,
                                                   style: TextStyle(
                                                     fontSize: 12,
                                                     fontWeight: FontWeight.bold,
@@ -736,15 +704,31 @@ class _DirectoryViewState extends State<DirectoryView> {
                                                 color: textPrimary,
                                               ),
                                             ),
-                                            Text(
-                                              'Discover the latest story arcs and new chapter releases.',
-                                              maxLines: 2,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: TextStyle(
-                                                fontSize: 11,
-                                                color: textSecondary,
+                                            if (isHovered &&
+                                                (_hoverChapters[item.id]
+                                                        ?.isNotEmpty ??
+                                                    false))
+                                              Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: _hoverChapters[item.id]!
+                                                    .map((ch) => _chapterRow(
+                                                        item, ch, textPrimary))
+                                                    .toList(),
+                                              )
+                                            else
+                                              Text(
+                                                item.description.trim().isEmpty
+                                                    ? 'No description available yet.'
+                                                    : item.description.trim(),
+                                                maxLines: 2,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  color: textSecondary,
+                                                ),
                                               ),
-                                            ),
                                             Container(
                                               padding:
                                                   const EdgeInsets.symmetric(
@@ -785,6 +769,132 @@ class _DirectoryViewState extends State<DirectoryView> {
             ),
           );
         },
+      ),
+    );
+  }
+
+  Widget _filterButton({
+    required String label,
+    required bool active,
+    required Color inputFill,
+    required Color borderStyle,
+    required Color textPrimary,
+    required Color textSecondary,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        height: 40,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        decoration: BoxDecoration(
+          color: inputFill,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: active ? AppColors.primary : borderStyle),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.tune_rounded,
+              size: 16,
+              color: active ? AppColors.primary : textSecondary,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: active ? AppColors.primary : textPrimary,
+                ),
+              ),
+            ),
+            Icon(Icons.keyboard_arrow_down_rounded,
+                size: 18, color: textSecondary),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _sortDropdown({
+    required String value,
+    required List<String> options,
+    required Color inputFill,
+    required Color borderStyle,
+    required Color textPrimary,
+    required Color textSecondary,
+    required ValueChanged<String> onChanged,
+    bool expand = false,
+  }) {
+    return Container(
+      height: 40,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(
+        color: inputFill,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: borderStyle),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: value,
+          isExpanded: expand,
+          isDense: true,
+          dropdownColor: inputFill,
+          borderRadius: BorderRadius.circular(14),
+          style: TextStyle(
+            color: textPrimary,
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
+          ),
+          icon: Icon(Icons.keyboard_arrow_down_rounded,
+              color: textSecondary, size: 18),
+          selectedItemBuilder: (context) => options
+              .map((o) => Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Sort: $o',
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: textPrimary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ))
+              .toList(),
+          items: options.map((val) {
+            final isCurrent = val == value;
+            return DropdownMenuItem<String>(
+              value: val,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: isCurrent
+                      ? AppColors.primary.withValues(alpha: 0.15)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  'Sort: $val',
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: isCurrent ? AppColors.primary : textPrimary,
+                    fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+          onChanged: (v) {
+            if (v != null) onChanged(v);
+          },
+        ),
       ),
     );
   }

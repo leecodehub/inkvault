@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import '../models/chapter_model.dart';
 import '../models/manga_model.dart';
+import '../models/schedule_entry.dart';
 import '../services/mangadex_api_client.dart';
 
 class MangaRepository {
@@ -17,6 +18,18 @@ class MangaRepository {
     } catch (e) {
       if (kDebugMode) {
         print('MangaRepository Error (getPopularManga): $e');
+      }
+      return [];
+    }
+  }
+
+  /// Searches manhwa by title
+  Future<List<MangaModel>> searchManga(String query, {int limit = 10}) async {
+    try {
+      return await _apiClient.searchManga(query, limit: limit);
+    } catch (e) {
+      if (kDebugMode) {
+        print('MangaRepository Error (searchManga): $e');
       }
       return [];
     }
@@ -40,7 +53,8 @@ class MangaRepository {
     int limit = 50,
     int offset = 0,
     String? title,
-    String? tagId,
+    List<String> tagIds = const [],
+    String tagMode = 'or',
     String orderKey = 'followedCount',
     bool ascending = false,
   }) async {
@@ -49,7 +63,8 @@ class MangaRepository {
         limit: limit,
         offset: offset,
         title: title,
-        tagId: tagId,
+        tagIds: tagIds,
+        tagMode: tagMode,
         orderKey: orderKey,
         ascending: ascending,
       );
@@ -73,7 +88,7 @@ class MangaRepository {
     }
   }
 
-  /// Fetches the readable English chapter list for a manga
+  /// Fetches the readable Korean chapter list for a manga
   Future<List<ChapterModel>> getChapters(String mangaId) async {
     try {
       return await _apiClient.fetchChapters(mangaId);
@@ -100,6 +115,43 @@ class MangaRepository {
         print('MangaRepository Error (getChapterImages): $e');
       }
       return [];
+    }
+  }
+
+  /// Fetches recently released chapters for the Weekly Schedule
+  Future<List<ScheduleEntry>> getScheduleEntries({int limit = 100}) async {
+    try {
+      return await _apiClient.fetchScheduleEntries(limit: limit);
+    } catch (e) {
+      if (kDebugMode) {
+        print('MangaRepository Error (getScheduleEntries): $e');
+      }
+      return [];
+    }
+  }
+
+  /// Attaches real rating + follows to each manga (batched).
+  Future<List<MangaModel>> enrichWithStats(List<MangaModel> list) async {
+    if (list.isEmpty) return list;
+    try {
+      final stats = await _apiClient.fetchStatistics(
+        list.map((m) => m.id).toList(),
+      );
+      if (stats.isEmpty) return list;
+      return list.map((m) {
+        final stat = stats[m.id];
+        if (stat == null) return m;
+        return m.copyWith(
+          ratingValue: stat.rating,
+          rating: stat.rating == null ? m.rating : stat.rating!.toStringAsFixed(1),
+          follows: stat.follows,
+        );
+      }).toList(growable: false);
+    } catch (e) {
+      if (kDebugMode) {
+        print('MangaRepository Error (enrichWithStats): $e');
+      }
+      return list;
     }
   }
 }

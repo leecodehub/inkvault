@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/chapter_model.dart';
 import '../models/manga_model.dart';
+import '../models/schedule_entry.dart';
 
 class MangaDexApiClient {
   static const Map<String, String> _headers = {
@@ -42,6 +43,35 @@ class MangaDexApiClient {
           .toList(growable: false);
     } catch (e) {
       debugPrint('MangaDex Fetch Error: $e');
+      return [];
+    }
+  }
+
+  /// Searches manhwa by title (used by the navbar search suggestions).
+  Future<List<MangaModel>> searchManga(String query, {int limit = 10}) async {
+    final Uri url = Uri.https('api.mangadex.org', '/manga', {
+      'limit': '$limit',
+      'title': query,
+      'originalLanguage[]': 'ko',
+      'order[followedCount]': 'desc',
+      'includes[]': 'cover_art',
+      'contentRating[]': ['safe', 'suggestive'],
+      'hasAvailableChapters': 'true',
+    });
+
+    try {
+      final response = await http.get(url, headers: _headers);
+      if (response.statusCode != 200) {
+        debugPrint('MangaDex Search Response Code: ${response.statusCode}');
+        return [];
+      }
+      final Map<String, dynamic> decoded = jsonDecode(response.body);
+      final List<dynamic> data = decoded['data'] ?? [];
+      return data
+          .map((item) => _mapMangaItem(Map<String, dynamic>.from(item)))
+          .toList(growable: false);
+    } catch (e) {
+      debugPrint('MangaDex Search Error: $e');
       return [];
     }
   }
@@ -91,7 +121,8 @@ class MangaDexApiClient {
     int limit = 50,
     int offset = 0,
     String? title,
-    String? tagId,
+    List<String> tagIds = const [],
+    String tagMode = 'or',
     String orderKey = 'followedCount',
     bool ascending = false,
   }) async {
@@ -107,8 +138,9 @@ class MangaDexApiClient {
     if (title != null && title.isNotEmpty) {
       params['title'] = title;
     }
-    if (tagId != null && tagId.isNotEmpty) {
-      params['includedTags[]'] = tagId;
+    if (tagIds.isNotEmpty) {
+      params['includedTags[]'] = tagIds;
+      params['tagMode'] = tagMode;
     }
 
     final Uri url = Uri.https('api.mangadex.org', '/manga', params);
@@ -178,13 +210,20 @@ class MangaDexApiClient {
     final String id = item['id'] ?? '';
     final attributes = item['attributes'] ?? {};
 
-    // Title Extraction
+    // Title Extraction (English first, then Korean, then first available)
     final Map<String, dynamic> titleMap =
         Map<String, dynamic>.from(attributes['title'] ?? {});
     final String title = titleMap['en'] ??
+        titleMap['ko'] ??
+        titleMap['ja-ro'] ??
         (titleMap.values.isNotEmpty
             ? titleMap.values.first.toString()
             : 'Untitled');
+
+    // Real description (English first, then Korean)
+    final Map<String, dynamic> descMap =
+        Map<String, dynamic>.from(attributes['description'] ?? {});
+    final String description = (descMap['en'] ?? descMap['ko'] ?? '').toString();
 
     // Cover Art Relationship Extraction
     final List<dynamic> relationships = item['relationships'] ?? [];
@@ -226,23 +265,23 @@ class MangaDexApiClient {
       coverUrl: coverUrl,
       category: category,
       chapter: lastChapter,
-      rating: '4.8',
+      rating: '—',
+      description: description,
     );
   }
 
-  /// Fetches the English chapter feed for a manga.
+  /// Fetches the chapter feed for a manga across ALL languages.
   ///
-  /// Returns only chapters that are actually hosted on MangaDex (external
-  /// chapters such as official publisher links have no readable pages and are
-  /// skipped). The returned IDs are real chapter UUIDs suitable for
-  /// [fetchChapterImages].
+  /// Returning every language guarantees chapters are available (Korean-only
+  /// feeds are often empty). Duplicate chapter numbers are collapsed, keeping
+  /// Korean first, then English, then anything else. External chapters (no
+  /// readable pages) are skipped.
   Future<List<ChapterModel>> fetchChapters(
     String mangaId, {
-    int limit = 200,
+    int limit = 500,
   }) async {
     final Uri url = Uri.https('api.mangadex.org', '/manga/$mangaId/feed', {
       'limit': '$limit',
-      'translatedLanguage[]': 'en',
       'order[chapter]': 'desc',
       'contentRating[]': ['safe', 'suggestive', 'erotica'],
       'includes[]': 'scanlation_group',
@@ -259,11 +298,12 @@ class MangaDexApiClient {
       final Map<String, dynamic> decoded = jsonDecode(response.body);
       final List<dynamic> data = decoded['data'] ?? [];
 
-      final List<ChapterModel> chapters = [];
+      // Dedupe by chapter number, preferring Korean > English > other.
+      final Map<String, ({int priority, ChapterModel chapter})> best = {};
+
       for (final item in data) {
         final attributes = item['attributes'] ?? {};
 
-        // Skip external / unavailable chapters: they have no at-home pages.
         final bool isExternal =
             (attributes['externalUrl']?.toString().isNotEmpty ?? false);
         final bool isUnavailable = attributes['isUnavailable'] == true;
@@ -272,14 +312,73 @@ class MangaDexApiClient {
         final ChapterModel chapter =
             ChapterModel.fromMangaDexJson(Map<String, dynamic>.from(item));
         if (chapter.id.isEmpty) continue;
-        chapters.add(chapter);
+
+        final String lang = attributes['translatedLanguage']?.toString() ?? '';
+        final int priority = lang == 'ko' ? 0 : (lang == 'en' ? 1 : 2);
+
+        final existing = best[chapter.chapterNumber];
+        if (existing == null || priority < existing.priority) {
+          best[chapter.chapterNumber] = (priority: priority, chapter: chapter);
+        }
       }
+
+      final List<ChapterModel> chapters =
+          best.values.map((e) => e.chapter).toList();
+
+      // Newest first (numeric when possible).
+      chapters.sort((a, b) {
+        final double av = double.tryParse(a.chapterNumber) ?? -1;
+        final double bv = double.tryParse(b.chapterNumber) ?? -1;
+        return bv.compareTo(av);
+      });
 
       return chapters;
     } catch (e) {
       debugPrint('MangaDex Feed Error: $e');
       return [];
     }
+  }
+
+  /// Fetches rating + follow counts for up to 100 manga ids at once.
+  ///
+  /// Returns `{mangaId: (rating, follows)}`. MangaDex has no public read count.
+  Future<Map<String, ({double? rating, int follows})>> fetchStatistics(
+    List<String> ids,
+  ) async {
+    final result = <String, ({double? rating, int follows})>{};
+    if (ids.isEmpty) return result;
+
+    for (int i = 0; i < ids.length; i += 100) {
+      final int end = (i + 100 > ids.length) ? ids.length : i + 100;
+      final chunk = ids.sublist(i, end);
+      final Uri url = Uri.https('api.mangadex.org', '/statistics/manga', {
+        'manga[]': chunk,
+      });
+
+      try {
+        final response = await http.get(url, headers: _headers);
+        if (response.statusCode != 200) continue;
+
+        final Map<String, dynamic> decoded = jsonDecode(response.body);
+        final Map<String, dynamic> stats =
+            Map<String, dynamic>.from(decoded['statistics'] ?? {});
+
+        stats.forEach((id, value) {
+          if (value is! Map) return;
+          final ratingMap = value['rating'];
+          final double? rating = (ratingMap is Map && ratingMap['average'] is num)
+              ? (ratingMap['average'] as num).toDouble()
+              : null;
+          final int follows =
+              (value['follows'] is num) ? (value['follows'] as num).toInt() : 0;
+          result[id] = (rating: rating, follows: follows);
+        });
+      } catch (e) {
+        debugPrint('MangaDex Statistics Error: $e');
+      }
+    }
+
+    return result;
   }
 
   /// Resolves the actual page image URLs for a chapter.
@@ -322,6 +421,139 @@ class MangaDexApiClient {
           .toList(growable: false);
     } catch (e) {
       debugPrint('MangaDex At-Home Error: $e');
+      return [];
+    }
+  }
+
+  /// Builds the Weekly Schedule from the top popular manhwa.
+  ///
+  /// Each series is assigned to a weekday using the release date of its most
+  /// recent readable chapter, so every day of the week gets populated.
+  Future<List<ScheduleEntry>> fetchScheduleEntries({int limit = 100}) async {
+    final Uri mangaUrl = Uri.https('api.mangadex.org', '/manga', {
+      'limit': '$limit',
+      'originalLanguage[]': 'ko',
+      'order[followedCount]': 'desc',
+      'includes[]': 'cover_art',
+      'contentRating[]': ['safe', 'suggestive'],
+      'hasAvailableChapters': 'true',
+    });
+
+    try {
+      final mangaResponse = await http.get(mangaUrl, headers: _headers);
+      if (mangaResponse.statusCode != 200) {
+        debugPrint(
+            'MangaDex Schedule Manga Response Code: ${mangaResponse.statusCode}');
+        return [];
+      }
+
+      final Map<String, dynamic> mangaDecoded = jsonDecode(mangaResponse.body);
+      final List<dynamic> mangaData = mangaDecoded['data'] ?? [];
+
+      final Map<String, MangaModel> byId = {};
+      for (final item in mangaData) {
+        final MangaModel manga =
+            _mapMangaItem(Map<String, dynamic>.from(item));
+        if (manga.id.isNotEmpty) byId[manga.id] = manga;
+      }
+      if (byId.isEmpty) return [];
+
+      final List<String> ids = byId.keys.toList();
+
+      // Collect recent chapters per manga so we can derive the weekday that
+      // manga typically releases on (the mode), not just its latest chapter.
+      final Map<String, ({String chapter, DateTime latest})> latest = {};
+      final Map<String, List<int>> weekdayHistory = {};
+
+      for (int i = 0; i < ids.length; i += 10) {
+        final int end = (i + 10 > ids.length) ? ids.length : i + 10;
+        final chunk = ids.sublist(i, end);
+        final Uri url = Uri.https('api.mangadex.org', '/chapter', {
+          'limit': '100',
+          'manga': chunk,
+          'order[createdAt]': 'desc',
+          'contentRating[]': ['safe', 'suggestive'],
+        });
+
+        final response = await http.get(url, headers: _headers);
+        if (response.statusCode != 200) continue;
+
+        final decoded = jsonDecode(response.body);
+        final data = decoded['data'] ?? [];
+
+        for (final item in data) {
+          final attributes = item['attributes'] ?? {};
+          final bool isExternal =
+              (attributes['externalUrl']?.toString().isNotEmpty ?? false);
+          if (isExternal) continue;
+
+          String mangaId = '';
+          for (final rel in (item['relationships'] as List? ?? [])) {
+            if (rel['type'] == 'manga') {
+              mangaId = rel['id']?.toString() ?? '';
+              break;
+            }
+          }
+          if (mangaId.isEmpty) continue;
+
+          final DateTime? date = DateTime.tryParse(
+            (attributes['readableAt'] ?? attributes['publishAt'] ?? '')
+                .toString(),
+          );
+          if (date == null) continue;
+          final DateTime local = date.toLocal();
+          if (local.isAfter(DateTime.now())) continue;
+
+          final history = weekdayHistory.putIfAbsent(mangaId, () => []);
+          if (history.length < 8) history.add(local.weekday);
+
+          final existing = latest[mangaId];
+          if (existing == null || local.isAfter(existing.latest)) {
+            latest[mangaId] = (
+              chapter: attributes['chapter']?.toString() ?? '',
+              latest: local,
+            );
+          }
+        }
+      }
+
+      int dominantWeekday(List<int> days) {
+        if (days.isEmpty) return DateTime.now().weekday;
+        final counts = <int, int>{};
+        for (final day in days) {
+          counts[day] = (counts[day] ?? 0) + 1;
+        }
+        int best = days.first;
+        int bestCount = -1;
+        counts.forEach((day, count) {
+          if (count > bestCount) {
+            bestCount = count;
+            best = day;
+          }
+        });
+        return best;
+      }
+
+      final List<ScheduleEntry> entries = [];
+      latest.forEach((mangaId, value) {
+        final manga = byId[mangaId];
+        if (manga == null) return;
+        final days = weekdayHistory[mangaId] ?? [value.latest.weekday];
+        entries.add(
+          ScheduleEntry(
+            weekday: dominantWeekday(days),
+            mangaId: mangaId,
+            title: manga.title,
+            coverUrl: manga.coverUrl,
+            chapter: value.chapter,
+            publishAt: value.latest,
+          ),
+        );
+      });
+
+      return entries;
+    } catch (e) {
+      debugPrint('MangaDex Schedule Error: $e');
       return [];
     }
   }

@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
 import '../constants/app_colors.dart';
 import '../models/chapter_model.dart';
 import '../models/manga_model.dart';
+import '../providers/auth_provider.dart';
 import '../repositories/manga_repository.dart';
 
 class ReaderView extends StatefulWidget {
@@ -33,6 +36,10 @@ class _ReaderViewState extends State<ReaderView> {
     super.initState();
     _scrollController = ScrollController();
     _loadChapterImages();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      context.read<AuthProvider>().recordRead(widget.manga);
+    });
   }
 
   Future<void> _loadChapterImages() async {
