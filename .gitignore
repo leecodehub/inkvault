@@ -46,3 +46,11 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Secrets / signing material (never commit these)
+*.jks
+*.keystore
+*.p12
+**/serviceAccount*.json
+*.env
+.env.*
