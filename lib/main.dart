@@ -1,4 +1,5 @@
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:inkvault2/firebase_options.dart';
 import 'package:provider/provider.dart';
@@ -16,6 +17,7 @@ import 'views/home_view.dart';
 import 'views/history_view.dart';
 import 'views/profile_view.dart';
 import 'views/schedule_view.dart';
+import 'views/splash_view.dart';
 import 'widgets/app_drawer.dart';
 import 'widgets/footer.dart';
 import 'widgets/navbar.dart';
@@ -75,6 +77,9 @@ class _InkVaultAppState extends State<InkVaultApp> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   String _currentTab = 'Home';
 
+  /// Show the animated splash on mobile only — never on web.
+  bool _showSplash = !kIsWeb;
+
   void _onTabSelected(String tab) {
     setState(() {
       _currentTab = tab;
@@ -94,44 +99,58 @@ class _InkVaultAppState extends State<InkVaultApp> {
           theme: AppTheme.lightTheme,
           darkTheme: AppTheme.darkTheme,
           themeMode: themeProvider.themeMode,
-          home: Scaffold(
-            key: _scaffoldKey,
-            backgroundColor:
-                isDark ? AppColors.darkCanvas : AppColors.lightCanvas,
-            appBar: PreferredSize(
-              preferredSize: const Size.fromHeight(64),
-              child: Navbar(
-                isDark: isDark,
-                onToggleTheme: themeProvider.toggleTheme,
-                activeTab: _currentTab,
-                onTabSelected: _onTabSelected,
-                onMenuTap: () => _scaffoldKey.currentState?.openEndDrawer(),
-                onProfileTap: () => _onTabSelected('Profile'),
-                onHistoryTap: () => _onTabSelected('History'),
-              ),
-            ),
-            endDrawer: AppDrawer(
-              isDark: isDark,
-              activeTab: _currentTab,
-              onTabSelected: _onTabSelected,
-            ),
-            body: SafeArea(
-              top: false,
-              child: SingleChildScrollView(
-                child: Column(
-                  children: [
-                    _buildCurrentView(isDark),
-                    Footer(
-                      isDark: isDark,
-                      onTabSelected: _onTabSelected,
-                    ),
-                  ],
-                ),
-              ),
-            ),
+          home: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 450),
+            child: _showSplash
+                ? SplashView(
+                    key: const ValueKey('splash'),
+                    onFinished: () => setState(() => _showSplash = false),
+                  )
+                : KeyedSubtree(
+                    key: const ValueKey('home'),
+                    child: _buildHomeScaffold(isDark, themeProvider),
+                  ),
           ),
         );
       },
+    );
+  }
+
+  Widget _buildHomeScaffold(bool isDark, ThemeProvider themeProvider) {
+    return Scaffold(
+      key: _scaffoldKey,
+      backgroundColor: isDark ? AppColors.darkCanvas : AppColors.lightCanvas,
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(64),
+        child: Navbar(
+          isDark: isDark,
+          onToggleTheme: themeProvider.toggleTheme,
+          activeTab: _currentTab,
+          onTabSelected: _onTabSelected,
+          onMenuTap: () => _scaffoldKey.currentState?.openEndDrawer(),
+          onProfileTap: () => _onTabSelected('Profile'),
+          onHistoryTap: () => _onTabSelected('History'),
+        ),
+      ),
+      endDrawer: AppDrawer(
+        isDark: isDark,
+        activeTab: _currentTab,
+        onTabSelected: _onTabSelected,
+      ),
+      body: SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          child: Column(
+            children: [
+              _buildCurrentView(isDark),
+              Footer(
+                isDark: isDark,
+                onTabSelected: _onTabSelected,
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
