@@ -7,6 +7,7 @@ import '../providers/auth_provider.dart';
 import '../utils/responsive.dart';
 import '../views/auth/auth_sheet.dart';
 import '../widgets/coin_pack_card.dart';
+import '../widgets/confirm_dialog.dart';
 
 class CoinShopView extends StatelessWidget {
   final bool isDark;
@@ -20,8 +21,37 @@ class CoinShopView extends StatelessWidget {
     CoinPack(coins: 1200, bonus: 250, price: '\$19.99', bestValue: true),
   ];
 
+  /// Confirmation dialog so a purchase cannot happen from an accidental tap.
+  Future<bool> _confirmPurchase(
+    BuildContext context, {
+    required String title,
+    required String message,
+    required String confirmLabel,
+  }) {
+    return showConfirmDialog(
+      context,
+      isDark: isDark,
+      title: title,
+      message: message,
+      confirmLabel: confirmLabel,
+    );
+  }
+
   Future<void> _buy(
       BuildContext context, AuthProvider auth, CoinPack pack) async {
+    final detail = pack.bonus > 0
+        ? '${pack.coins} coins + ${pack.bonus} bonus (${pack.total} total)'
+        : '${pack.total} coins';
+
+    final confirmed = await _confirmPurchase(
+      context,
+      title: 'Confirm purchase',
+      message:
+          'Buy $detail for ${pack.price}?\n\nThis is a simulated purchase — no real money is charged.',
+      confirmLabel: 'Buy',
+    );
+    if (!confirmed || !context.mounted) return;
+
     if (!auth.isLoggedIn) {
       await showAuthSheet(context,
           isDark: isDark, reason: 'Log in to buy coins and keep your balance.');
@@ -36,6 +66,19 @@ class CoinShopView extends StatelessWidget {
   }
 
   Future<void> _buyPremium(BuildContext context, AuthProvider auth) async {
+    final extending = auth.isPremium;
+
+    final confirmed = await _confirmPurchase(
+      context,
+      title: extending ? 'Confirm extension' : 'Confirm subscription',
+      message:
+          '${extending ? 'Extend' : 'Activate'} Premium for ${AppConfig.premiumCost} coins?\n\n'
+          'You get unlimited bookmarks and free new-release chapters for '
+          '${AppConfig.premiumDurationDays} days. This is a simulated purchase — no real money is charged.',
+      confirmLabel: extending ? 'Extend' : 'Subscribe',
+    );
+    if (!confirmed || !context.mounted) return;
+
     if (!auth.isLoggedIn) {
       await showAuthSheet(context,
           isDark: isDark, reason: 'Log in to subscribe to Premium.');

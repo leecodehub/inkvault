@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../constants/app_colors.dart';
 import '../providers/auth_provider.dart';
 import '../views/auth/auth_sheet.dart';
+import 'confirm_dialog.dart';
 
 /// Navigation drawer (opens from the right): sections on top, account pinned
 /// to the bottom.
@@ -205,6 +206,16 @@ class AppDrawer extends StatelessWidget {
                       width: double.infinity,
                       child: TextButton.icon(
                         onPressed: () async {
+                          final confirmed = await showConfirmDialog(
+                            context,
+                            isDark: isDark,
+                            title: 'Log out',
+                            message:
+                                'Are you sure you want to log out of InkVault?',
+                            confirmLabel: 'Log out',
+                            icon: Icons.logout_rounded,
+                          );
+                          if (!confirmed || !context.mounted) return;
                           await auth.signOut();
                           if (context.mounted) Navigator.pop(context);
                         },

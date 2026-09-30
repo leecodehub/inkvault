@@ -7,6 +7,7 @@ import '../providers/auth_provider.dart';
 import '../repositories/manga_repository.dart';
 import '../views/auth/auth_sheet.dart';
 import '../views/manga_detail_modal.dart';
+import 'confirm_dialog.dart';
 import 'theme_toggle.dart';
 
 class Navbar extends StatefulWidget implements PreferredSizeWidget {
@@ -436,8 +437,17 @@ class _NavbarState extends State<Navbar> {
         borderRadius: BorderRadius.circular(14),
         side: BorderSide(color: borderColor),
       ),
-      onSelected: (value) {
+      onSelected: (value) async {
         if (value == 'logout') {
+          final confirmed = await showConfirmDialog(
+            context,
+            isDark: isDark,
+            title: 'Sign out',
+            message: 'Are you sure you want to sign out of InkVault?',
+            confirmLabel: 'Sign out',
+            icon: Icons.logout_rounded,
+          );
+          if (!confirmed || !context.mounted) return;
           context.read<AuthProvider>().signOut();
         } else if (value == 'profile') {
           widget.onProfileTap?.call();
